@@ -5,7 +5,6 @@
 
 import pygame
 import pygame_menu as pgm
-import pygame_vkeyboard as vkb
 import pibooth
 from pibooth import fonts
 from pibooth.utils import LOGGER, get_event_pos
@@ -102,20 +101,35 @@ class PiConfigMenu(object):
         self._main_menu.disable()
         self._main_menu.add.vertical_margin(20)
 
-        self._keyboard = vkb.VKeyboard(self.win.surface,
-                                       self._on_keyboard_event,
-                                       vkb.VKeyboardLayout(vkb.VKeyboardLayout.QWERTY),
-                                       renderer=vkb.VKeyboardRenderer.DARK,
-                                       show_text=True,
-                                       joystick_navigation=True)
-        self._keyboard.disable()
+        self._keyboard = self._build_keyboard()
 
         for name in DEFAULT:
             submenu = self._build_submenu(name)
-            if len(submenu._widgets) > 2:
+            if len(submenu.get_widgets()) > 2:
                 self._main_menu.add.button(submenu.get_title(), submenu)
         self._main_menu.add.button('Exit', self._on_exit)
         self._main_menu.add.vertical_margin(20)
+
+    def _build_keyboard(self):
+        """Build the virtual keyboard if enabled in the configuration and the
+        optional 'pygame-vkeyboard' package is installed. Return None otherwise.
+        """
+        if not self.cfg.getboolean('GENERAL', 'vkeyboard'):
+            return None
+        try:
+            import pygame_vkeyboard as vkb
+        except ImportError:
+            LOGGER.warning("Virtual keyboard is enabled in the configuration but 'pygame-vkeyboard' "
+                           "is not installed, run 'pip install pibooth[vkeyboard]'")
+            return None
+        keyboard = vkb.VKeyboard(self.win.surface,
+                                 self._on_keyboard_event,
+                                 vkb.VKeyboardLayout(vkb.VKeyboardLayout.QWERTY),
+                                 renderer=vkb.VKeyboardRenderer.DARK,
+                                 show_text=True,
+                                 joystick_navigation=True)
+        keyboard.disable()
+        return keyboard
 
     def _build_submenu(self, section):
         """Build sub-menu"""
@@ -301,7 +315,9 @@ class PiConfigMenu(object):
         """Called when the application is exited by menu.
         """
         self._on_close()
-        exit(0)
+        # Post a QUIT event so that the main loop exits through the regular
+        # path and 'pibooth_cleanup' hooks are called
+        pygame.event.post(pygame.event.Event(pygame.QUIT))
 
     def show(self):
         """Show the menu.
@@ -345,12 +361,12 @@ class PiConfigMenu(object):
     def process(self, events):
         """Process the events related to the menu.
         """
-        if not self._keyboard.is_enabled():
+        if self._keyboard is None or not self._keyboard.is_enabled():
             self._main_menu.update(events)
             if self._main_menu.is_enabled():  # Menu may have been closed
                 self._main_menu.draw(self.win.surface)
                 selected = self._main_menu.get_current().get_selected_widget()
-                if isinstance(selected, pgm.widgets.TextInput) and self.cfg.getboolean('GENERAL', 'vkeyboard'):
+                if self._keyboard is not None and isinstance(selected, pgm.widgets.TextInput):
                     for event in events:
                         if (event.type == pygame.MOUSEBUTTONDOWN or event.type == pygame.FINGERDOWN)\
                                 and selected.get_scrollarea().collide(selected, event):

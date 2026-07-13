@@ -14,10 +14,25 @@ from fnmatch import fnmatchcase
 import contextlib
 import errno
 import subprocess
+import platformdirs
 import pygame
 
 
 LOGGER = logging.getLogger("pibooth")
+
+
+def get_config_dir():
+    """Return the pibooth configuration directory for the current platform.
+
+    The historical '~/.config/pibooth' location is kept when it already
+    exists (backward compatibility and Linux default), otherwise the
+    platform convention applies (e.g. '%APPDATA%\\pibooth' on Windows,
+    '~/Library/Application Support/pibooth' on macOS).
+    """
+    legacy = osp.expanduser('~/.config/pibooth')
+    if osp.isdir(legacy):
+        return legacy
+    return platformdirs.user_config_dir('pibooth')
 
 
 class BlockConsoleHandler(logging.StreamHandler):

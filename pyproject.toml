@@ -1,0 +1,109 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pibooth"
+description = "A photo booth application in pure Python for the Raspberry Pi and desktop platforms"
+readme = "README.rst"
+license = { text = "MIT" }
+authors = [
+    { name = "Vincent Verdeil" },
+    { name = "Antoine Rousseaux" },
+]
+keywords = ["Raspberry Pi", "camera", "photobooth"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Environment :: Other Environment",
+    "Intended Audience :: Developers",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: MacOS",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Multimedia :: Graphics :: Capture :: Digital Camera",
+]
+requires-python = ">=3.11"
+dependencies = [
+    "Pillow>=10.4.0",
+    "pygame>=2.5",
+    "pygame-menu>=4.4",
+    "psutil>=5.5.1",
+    "pluggy>=1.0",
+    "gpiozero>=1.6",
+    "platformdirs>=3.0",
+    # Legacy Raspberry Pi OS (32-bit arm) camera and GPIO backends
+    'picamera>=1.13 ; platform_machine>="armv0l" and platform_machine<="armv9l"',
+    'RPi.GPIO>=0.7.0 ; platform_machine>="armv0l" and platform_machine<="armv9l"',
+]
+dynamic = ["version"]
+
+[project.urls]
+Homepage = "https://github.com/pibooth/pibooth"
+Documentation = "https://pibooth.readthedocs.io"
+
+[project.optional-dependencies]
+dslr = ["gphoto2>=2.0.0 ; sys_platform!='win32'"]
+printer = [
+    "pycups>=1.9.73 ; sys_platform!='win32'",
+    "pycups-notify>=0.0.4 ; sys_platform!='win32'",
+    "pywin32>=306 ; sys_platform=='win32'",
+]
+webcam = ["opencv-python>=4.8"]
+# GPIO backend for Raspberry Pi 5 / 64-bit Raspberry Pi OS. Requires swig and
+# the lgpio C library to build; prefer 'apt install python3-lgpio' with a
+# '--system-site-packages' virtualenv on Raspberry Pi OS.
+rpi = ["lgpio>=0.2 ; platform_machine=='aarch64' and sys_platform=='linux'"]
+vkeyboard = ["pygame-vkeyboard>=2.0.8"]
+doc = ["sphinx", "sphinx-rtd-theme", "sphinx-copybutton"]
+
+[project.scripts]
+pibooth = "pibooth.booth:main"
+pibooth-count = "pibooth.scripts.count:main"
+pibooth-diag = "pibooth.scripts.diagnostic:main"
+pibooth-fonts = "pibooth.scripts.fonts:main"
+pibooth-regen = "pibooth.scripts.regenerate:main"
+pibooth-printcfg = "pibooth.scripts.printer:main"
+
+[tool.setuptools]
+zip-safe = false
+
+[tool.setuptools.dynamic]
+version = { attr = "pibooth.__version__" }
+
+[tool.setuptools.packages.find]
+include = ["pibooth*"]
+
+[tool.setuptools.package-data]
+pibooth = ["*.ini"]
+"pibooth.fonts" = ["*.ttf"]
+"pibooth.pictures" = ["*/*.png"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "SIM", # flake8-simplify
+    "C4",  # flake8-comprehensions
+]
+ignore = [
+    "B008", # function call in default argument (used by config menus)
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Camera backends keep optional hardware imports at top level in try/except
+"pibooth/camera/*.py" = ["E402"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

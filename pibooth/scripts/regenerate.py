@@ -10,7 +10,7 @@ from datetime import datetime
 
 from PIL import Image
 
-from pibooth.utils import LOGGER, configure_logging
+from pibooth.utils import LOGGER, configure_logging, get_config_dir
 from pibooth.plugins import create_plugin_manager
 from pibooth.config import PiConfigParser
 from pibooth.pictures import get_picture_factory
@@ -68,7 +68,7 @@ def main():
     """
     parser = argparse.ArgumentParser(usage="%(prog)s [options]", description="This script lets you regenerate the final pictures from the original captures present in the raw directory.")
 
-    parser.add_argument("config_directory", nargs='?', default="~/.config/pibooth",
+    parser.add_argument("config_directory", nargs='?', default=get_config_dir(),
                         help=u"path to configuration directory (default: %(default)s)")
 
     options = parser.parse_args()
@@ -90,7 +90,7 @@ def main():
     # Initialize varibales normally done by the app
     picture_plugin = plugin_manager.get_plugin('pibooth-core:picture')
     picture_plugin.texts_vars['date'] = datetime.now()
-    picture_plugin.texts_vars['count'] = Counters(config.join_path("counters.pickle"), taken=0, printed=0, forgotten=0,
+    picture_plugin.texts_vars['count'] = Counters(config.join_path("counters.json"), taken=0, printed=0, forgotten=0,
                                                   remaining_duplicates=config.getint('PRINTER', 'max_duplicates'))
 
     for path in config.gettuple('GENERAL', 'directory', 'path'):

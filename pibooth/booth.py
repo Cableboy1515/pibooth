@@ -21,8 +21,8 @@ import pibooth
 from pibooth import fonts
 from pibooth import language
 from pibooth.counters import Counters
-from pibooth.utils import (LOGGER, PoolingTimer, configure_logging, get_crash_message,
-                           set_logging_level, get_event_pos)
+from pibooth.utils import (LOGGER, PoolingTimer, configure_logging, get_config_dir,
+                           get_crash_message, set_logging_level, get_event_pos)
 from pibooth.states import StateMachine
 from pibooth.plugins import create_plugin_manager
 from pibooth.view import PiWindow
@@ -124,7 +124,7 @@ class PiApplication(object):
         self.previous_animated = None
         self.previous_picture_file = None
 
-        self.count = Counters(self._config.join_path("counters.pickle"),
+        self.count = Counters(self._config.join_path("counters.json"),
                               taken=0, printed=0, forgotten=0,
                               remaining_duplicates=self._config.getint('PRINTER', 'max_duplicates'))
 
@@ -421,7 +421,7 @@ def main():
 
     parser = argparse.ArgumentParser(usage="%(prog)s [options]", description=pibooth.__doc__)
 
-    parser.add_argument("config_directory", nargs='?', default="~/.config/pibooth",
+    parser.add_argument("config_directory", nargs='?', default=get_config_dir(),
                         help=u"path to configuration directory (default: %(default)s)")
 
     parser.add_argument('--version', action='version', version=pibooth.__version__,

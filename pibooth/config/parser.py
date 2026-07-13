@@ -6,6 +6,7 @@
 import io
 import ast
 import os
+import sys
 import os.path as osp
 import itertools
 import inspect
@@ -325,7 +326,12 @@ class PiConfigParser(RawConfigParser):
 
     def handle_autostart(self):
         """Handle desktop file to start pibooth at the Raspberry Pi startup.
+
+        Freedesktop autostart entries only exist on Linux, this is a no-op
+        on other platforms.
         """
+        if sys.platform != 'linux':
+            return
         filename = osp.expanduser('~/.config/autostart/pibooth.desktop')
         dirname = osp.dirname(filename)
         enable = self.getboolean('GENERAL', 'autostart')

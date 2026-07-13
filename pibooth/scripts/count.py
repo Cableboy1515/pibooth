@@ -5,8 +5,9 @@
 
 import sys
 import json
+import os.path as osp
 from pibooth.counters import Counters
-from pibooth.utils import configure_logging
+from pibooth.utils import configure_logging, get_config_dir
 from pibooth.config import PiConfigParser
 from pibooth.plugins import create_plugin_manager
 
@@ -16,9 +17,9 @@ def main():
     """
     configure_logging()
     plugin_manager = create_plugin_manager()
-    config = PiConfigParser("~/.config/pibooth/pibooth.cfg", plugin_manager)
+    config = PiConfigParser(osp.join(get_config_dir(), "pibooth.cfg"), plugin_manager)
 
-    counters = Counters(config.join_path("counters.pickle"),
+    counters = Counters(config.join_path("counters.json"),
                         taken=0, printed=0, forgotten=0,
                         remaining_duplicates=config.getint('PRINTER', 'max_duplicates'))
 

@@ -164,7 +164,7 @@ class CvCamera(BaseCamera):
         while not timer.is_timeout():
             remaining = int(timer.remaining() + 1)
             if self._overlay is None or remaining != timeout:
-                # Rebluid overlay only if remaining number has changed
+                # Rebuild overlay only if remaining number has changed
                 self._show_overlay(str(remaining), alpha)
                 timeout = remaining
 

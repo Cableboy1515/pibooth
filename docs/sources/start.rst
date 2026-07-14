@@ -106,8 +106,8 @@ variables defined in the configuration (see :ref:`Configure` below):
   the orientation is automatically chosen depending on the resolution.
 
 .. note:: The resolution is an important parameter, it is responsible for the quality of the final
-          picture. For ``Raspberry Pi`` camera, see the list of
-          `picamera possible resolutions <http://picamera.readthedocs.io/en/latest/fov.html#sensor-modes>`_ .
+          picture. For ``Raspberry Pi`` camera, see the sensor modes of your camera module in the
+          `picamera2 manual <https://datasheets.raspberrypi.com/camera/picamera2-manual.pdf>`_ .
 
           For ``gphoto2`` camera, the possible resolutions can be listed by executeing
           the following command (adapt device path as needed)::
@@ -139,7 +139,8 @@ sequentially on the captures sequence.
 
 Have a look to the predefined effects available depending on the camera used:
 
-* `picamera effects <https://picamera.readthedocs.io/en/latest/api_camera.html#picamera.PiCamera.image_effect>`_
+* Raspberry Pi camera: no effect is available (the legacy ``picamera`` GPU effects do not
+  exist anymore with the libcamera stack used by ``picamera2``)
 * `gPhoto2 effects (PIL based) <https://pillow.readthedocs.io/en/latest/reference/ImageFilter.html>`_
 
 Texts and fonts

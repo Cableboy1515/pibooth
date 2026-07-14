@@ -86,7 +86,10 @@ def counters(tmpdir):
 
 @pytest.fixture(scope="session")
 def proxy_rpi():
-    return get_rpi_camera_proxy()
+    proxy = get_rpi_camera_proxy()
+    if proxy is None:
+        pytest.skip("No Raspberry Pi camera detected")
+    return proxy
 
 
 @pytest.fixture(scope="session")
@@ -107,7 +110,10 @@ def camera_rpi_gp(proxy_rpi, proxy_gp):
 
 @pytest.fixture(scope="session")
 def proxy_cv():
-    return get_cv_camera_proxy()
+    proxy = get_cv_camera_proxy()
+    if proxy is None:
+        pytest.skip("No OpenCV compatible camera detected")
+    return proxy
 
 
 @pytest.fixture(scope="session")
@@ -128,7 +134,10 @@ def camera_cv_gp(proxy_cv, proxy_gp):
 
 @pytest.fixture(scope="session")
 def proxy_gp():
-    return get_gp_camera_proxy()
+    proxy = get_gp_camera_proxy()
+    if proxy is None:
+        pytest.skip("No gPhoto2 compatible camera detected")
+    return proxy
 
 
 @pytest.fixture(scope="session")

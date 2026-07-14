@@ -1,17 +1,18 @@
-# -*- coding: utf-8 -*-
-
 import time
+
 import pygame
+
 try:
     import cv2
     import numpy as np
 except ImportError:
     cv2 = None  # OpenCV is optional
 from PIL import Image
-from pibooth.pictures import sizing
-from pibooth.utils import PoolingTimer, LOGGER
-from pibooth.language import get_translated_text
+
 from pibooth.camera.base import BaseCamera
+from pibooth.language import get_translated_text
+from pibooth.pictures import sizing
+from pibooth.utils import LOGGER, PoolingTimer
 
 
 def get_cv_camera_proxy(port=None):
@@ -26,7 +27,7 @@ def get_cv_camera_proxy(port=None):
 
     if port is not None:
         if not isinstance(port, int):
-            raise TypeError("Invalid OpenCV camera port '{}'".format(type(port)))
+            raise TypeError(f"Invalid OpenCV camera port '{type(port)}'")
         camera = cv2.VideoCapture(port)
         if camera.isOpened():
             return camera
@@ -40,37 +41,35 @@ def get_cv_camera_proxy(port=None):
 
 
 class CvCamera(BaseCamera):
+    """OpenCV camera management."""
 
-    """OpenCV camera management.
-    """
-
-    IMAGE_EFFECTS = [u'none',
-                     u'blur',
-                     u'contour',
-                     u'detail',
-                     u'edge_enhance',
-                     u'edge_enhance_more',
-                     u'emboss',
-                     u'find_edges',
-                     u'smooth',
-                     u'smooth_more',
-                     u'sharpen']
+    IMAGE_EFFECTS = [
+        "none",
+        "blur",
+        "contour",
+        "detail",
+        "edge_enhance",
+        "edge_enhance_more",
+        "emboss",
+        "find_edges",
+        "smooth",
+        "smooth_more",
+        "sharpen",
+    ]
 
     def __init__(self, camera_proxy):
-        super(CvCamera, self).__init__(camera_proxy)
+        super().__init__(camera_proxy)
         self._overlay_alpha = 255
         self._preview_resolution = None
 
     def _specific_initialization(self):
-        """Camera initialization.
-        """
+        """Camera initialization."""
         self._preview_resolution = (self._cam.get(cv2.CAP_PROP_FRAME_WIDTH), self._cam.get(cv2.CAP_PROP_FRAME_HEIGHT))
         LOGGER.debug("Preview resolution is %s", self._preview_resolution)
         self._cam.set(cv2.CAP_PROP_ISO_SPEED, self.preview_iso)
 
     def _show_overlay(self, text, alpha):
-        """Add an image as an overlay.
-        """
+        """Add an image as an overlay."""
         if self._window:  # No window means no preview displayed
             rect = self.get_rect()
             self._overlay_alpha = alpha
@@ -79,8 +78,7 @@ class CvCamera(BaseCamera):
             self._overlay = cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGBA2RGB)
 
     def _rotate_image(self, image, rotation):
-        """Rotate an OpenCV image, same direction than RpiCamera.
-        """
+        """Rotate an OpenCV image, same direction than RpiCamera."""
         if rotation == 90:
             image = cv2.transpose(image)
             return cv2.flip(image, 1)
@@ -92,23 +90,22 @@ class CvCamera(BaseCamera):
         return image
 
     def _get_preview_image(self):
-        """Capture a new preview image.
-        """
+        """Capture a new preview image."""
         rect = self.get_rect()
 
         ret, image = self._cam.read()
         if not ret:
-            raise IOError("Can not get camera preview image")
+            raise OSError("Can not get camera preview image")
         image = self._rotate_image(image, self.preview_rotation)
 
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         # Crop to keep aspect ratio of the resolution
         height, width = image.shape[:2]
         cropped = sizing.new_size_by_croping_ratio((width, height), self.resolution)
-        image = image[cropped[1]:cropped[3], cropped[0]:cropped[2]]
+        image = image[cropped[1] : cropped[3], cropped[0] : cropped[2]]
         # Resize to fit the available space in the window
         height, width = image.shape[:2]
-        size = sizing.new_size_keep_aspect_ratio((width, height), (rect.width, rect.height), 'outer')
+        size = sizing.new_size_keep_aspect_ratio((width, height), (rect.width, rect.height), "outer")
         image = cv2.resize(image, size, interpolation=cv2.INTER_AREA)
 
         if self.preview_flip:
@@ -118,7 +115,7 @@ class CvCamera(BaseCamera):
             if self._overlay.shape != image.shape:
                 # Previous operations may create a size with one pixel gap
                 self._overlay = cv2.resize(self._overlay, (image.shape[1], image.shape[0]))
-            image = cv2.addWeighted(image, 1, self._overlay, self._overlay_alpha / 255., 0)
+            image = cv2.addWeighted(image, 1, self._overlay, self._overlay_alpha / 255.0, 0)
         return Image.fromarray(image)
 
     def _post_process_capture(self, capture_data):
@@ -133,25 +130,24 @@ class CvCamera(BaseCamera):
         # Crop to keep aspect ratio of the resolution
         height, width = image.shape[:2]
         cropped = sizing.new_size_by_croping_ratio((width, height), self.resolution)
-        image = image[cropped[1]:cropped[3], cropped[0]:cropped[2]]
+        image = image[cropped[1] : cropped[3], cropped[0] : cropped[2]]
         # Resize to fit the resolution
         height, width = image.shape[:2]
-        size = sizing.new_size_keep_aspect_ratio((width, height), self.resolution, 'outer')
+        size = sizing.new_size_keep_aspect_ratio((width, height), self.resolution, "outer")
         image = cv2.resize(image, size, interpolation=cv2.INTER_AREA)
 
         if self.capture_flip:
             image = cv2.flip(image, 1)
 
-        if effect != 'none':
+        if effect != "none":
             LOGGER.warning("Effect with OpenCV camera is not implemented")
 
         # Ensure contiguous uint8 array and explicit RGB for PIL (avoids black image on some setups)
         image = np.ascontiguousarray(image, dtype=np.uint8)
-        return Image.fromarray(image, mode='RGB')
+        return Image.fromarray(image, mode="RGB")
 
     def preview(self, window, flip=True):
-        """Setup the preview.
-        """
+        """Setup the preview."""
         self._window = window
         self.preview_flip = flip
         self._window.show_image(self._get_preview_image())
@@ -177,12 +173,11 @@ class CvCamera(BaseCamera):
             if updated_rect:
                 pygame.display.update(updated_rect)
 
-        self._show_overlay(get_translated_text('smile'), alpha)
+        self._show_overlay(get_translated_text("smile"), alpha)
         self._window.show_image(self._get_preview_image())
 
     def preview_wait(self, timeout, alpha=80):
-        """Wait the given time.
-        """
+        """Wait the given time."""
         timeout = int(timeout)
         if timeout < 1:
             raise ValueError("Start time shall be greater than 0")
@@ -194,21 +189,19 @@ class CvCamera(BaseCamera):
             if updated_rect:
                 pygame.display.update(updated_rect)
 
-        self._show_overlay(get_translated_text('smile'), alpha)
+        self._show_overlay(get_translated_text("smile"), alpha)
         self._window.show_image(self._get_preview_image())
 
     def stop_preview(self):
-        """Stop the preview.
-        """
+        """Stop the preview."""
         self._hide_overlay()
         self._window = None
 
     def capture(self, effect=None):
-        """Capture a new picture.
-        """
+        """Capture a new picture."""
         effect = str(effect).lower()
         if effect not in self.IMAGE_EFFECTS:
-            raise ValueError("Invalid capture effect '{}' (choose among {})".format(effect, self.IMAGE_EFFECTS))
+            raise ValueError(f"Invalid capture effect '{effect}' (choose among {self.IMAGE_EFFECTS})")
 
         self._cam.set(cv2.CAP_PROP_FRAME_WIDTH, self.resolution[0])
         self._cam.set(cv2.CAP_PROP_FRAME_HEIGHT, self.resolution[1])
@@ -224,7 +217,7 @@ class CvCamera(BaseCamera):
         LOGGER.debug("Taking capture at resolution %s", self.resolution)
         ret, image = self._cam.read()
         if not ret:
-            raise IOError("Can not capture frame")
+            raise OSError("Can not capture frame")
         image = self._rotate_image(image, self.capture_rotation)
 
         LOGGER.debug("Putting preview resolution back to %s", self._preview_resolution)
@@ -240,7 +233,6 @@ class CvCamera(BaseCamera):
         self._hide_overlay()  # If stop_preview() has not been called
 
     def quit(self):
-        """Close the camera driver, it's definitive.
-        """
+        """Close the camera driver, it's definitive."""
         if self._cam:
             self._cam.release()

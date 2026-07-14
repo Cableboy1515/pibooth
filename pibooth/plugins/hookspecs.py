@@ -1,8 +1,6 @@
-# -*- coding: utf-8 -*-
-
 import pluggy
 
-hookspec = pluggy.HookspecMarker('pibooth')
+hookspec = pluggy.HookspecMarker("pibooth")
 
 # --- Pibooth state-independent hooks ------------------------------------------
 

@@ -1,12 +1,12 @@
-# -*- coding: utf-8 -*-
-
 import os
 import os.path as osp
-from pibooth import fonts
-from pibooth.utils import LOGGER
-from pibooth.pictures import sizing
+
 from PIL import Image, ImageDraw
 from PIL.Image import Resampling
+
+from pibooth import fonts
+from pibooth.pictures import sizing
+from pibooth.utils import LOGGER
 
 try:
     import cv2
@@ -15,8 +15,7 @@ except ImportError:
     cv2 = None
 
 
-class PictureFactory(object):
-
+class PictureFactory:
     """
     Concatenate up to 4 PIL images in portrait orientation...
 
@@ -40,9 +39,9 @@ class PictureFactory(object):
       +---------------+     +---------------+     +---------------+     +----+-+-+-+----+
     """
 
-    CENTER = 'center'
-    RIGHT = 'right'
-    LEFT = 'left'
+    CENTER = "center"
+    RIGHT = "right"
+    LEFT = "left"
 
     def __init__(self, width, height, *images):
         assert len(images) in range(1, 5), "1 to 4 images can be concatenated"
@@ -64,8 +63,7 @@ class PictureFactory(object):
         self.is_portrait = self.width < self.height
 
     def _iter_images(self):
-        """Yield source images to concatenate.
-        """
+        """Yield source images to concatenate."""
         raise NotImplementedError
 
     def _iter_images_rects(self):
@@ -166,8 +164,7 @@ class PictureFactory(object):
         raise NotImplementedError
 
     def _image_paste(self, image, dest_image, pos_x, pos_y):
-        """Paste the given image on the destination one.
-        """
+        """Paste the given image on the destination one."""
         raise NotImplementedError
 
     def _build_background(self):
@@ -241,11 +238,14 @@ class PictureFactory(object):
             if align == self.CENTER:
                 text_x += (max_width - text_width) // 2
             elif align == self.RIGHT:
-                text_x += (max_width - text_width)
+                text_x += max_width - text_width
 
-            draw.text((text_x - offset_x // 2,
-                       text_y + (max_height - text_height) // 2 - offset_y // 2),
-                      text, color, font=font)
+            draw.text(
+                (text_x - offset_x // 2, text_y + (max_height - text_height) // 2 - offset_y // 2),
+                text,
+                color,
+                font=font,
+            )
 
     def _build_outlines(self, image):
         """Build rectangle around each elements. This method is only for
@@ -256,10 +256,10 @@ class PictureFactory(object):
         """
         draw = ImageDraw.Draw(image)
         for x, y, w, h in self._iter_images_rects():
-            draw.rectangle(((x, y), (x + w, y + h)), outline='red')
+            draw.rectangle(((x, y), (x + w, y + h)), outline="red")
         if self._texts:
             for x, y, w, h in self._iter_texts_rects():
-                draw.rectangle(((x, y), (x + w, y + h)), outline='red')
+                draw.rectangle(((x, y), (x + w, y + h)), outline="red")
 
     def add_text(self, text, font_name, color, align=CENTER):
         """Add a new text.
@@ -273,7 +273,7 @@ class PictureFactory(object):
         :param align: text alignment: left, right or center
         :type align: str
         """
-        assert align in [self.CENTER, self.RIGHT, self.LEFT], "Unknown aligment '{}'".format(align)
+        assert align in [self.CENTER, self.RIGHT, self.LEFT], f"Unknown aligment '{align}'"
         self._texts.append((text, fonts.get_filename(font_name), color, align))
         if self.is_portrait:
             self._texts_height = int(self.height // 6)
@@ -293,7 +293,7 @@ class PictureFactory(object):
             self._background_color = color_or_path
         else:
             if not osp.isfile(color_or_path):
-                raise ValueError("Invalid background image '{}'".format(color_or_path))
+                raise ValueError(f"Invalid background image '{color_or_path}'")
             self._background_image = color_or_path
         self._final = None  # Force rebuild
 
@@ -304,7 +304,7 @@ class PictureFactory(object):
         :type image_path: str
         """
         if not osp.isfile(image_path):
-            raise ValueError("Invalid background image '{}'".format(image_path))
+            raise ValueError(f"Invalid background image '{image_path}'")
         self._overlay_image = image_path
         self._final = None  # Force rebuild
 
@@ -354,7 +354,6 @@ class PictureFactory(object):
         :rtype: object
         """
         if not self._final or rebuild:
-
             LOGGER.info("Use %s to create background", self.name)
             image = self._build_background()
 
@@ -392,56 +391,47 @@ class PictureFactory(object):
 
 
 class PilPictureFactory(PictureFactory):
-
     def _image_resize_keep_ratio(self, image, max_w, max_h, crop=False):
-        """See upper class description.
-        """
+        """See upper class description."""
         if crop:
-            width, height = sizing.new_size_keep_aspect_ratio(image.size, (max_w, max_h), 'outer')
+            width, height = sizing.new_size_keep_aspect_ratio(image.size, (max_w, max_h), "outer")
             image = image.resize((width, height), Resampling.LANCZOS)
             image = image.crop(sizing.new_size_by_croping(image.size, (max_w, max_h)))
         else:
-            width, height = sizing.new_size_keep_aspect_ratio(image.size, (max_w, max_h), 'inner')
+            width, height = sizing.new_size_keep_aspect_ratio(image.size, (max_w, max_h), "inner")
             image = image.resize((width, height), Resampling.LANCZOS)
         return image, image.size[0], image.size[1]
 
     def _image_paste(self, image, dest_image, pos_x, pos_y):
-        """See upper class description.
-        """
+        """See upper class description."""
         dest_image.paste(image, (pos_x, pos_y))
 
     def _iter_images(self):
-        """See upper class description.
-        """
-        for image in self._images:
-            yield image
+        """See upper class description."""
+        yield from self._images
 
     def _build_final_image(self, image):
-        """See upper class description.
-        """
+        """See upper class description."""
         if self._overlay_image:
-            overlay = Image.open(self._overlay_image).convert('RGBA')
+            overlay = Image.open(self._overlay_image).convert("RGBA")
             overlay, _, _ = self._image_resize_keep_ratio(overlay, self.width, self.height, True)
-            image = Image.alpha_composite(image.convert('RGBA'), overlay)
-            image = image.convert('RGB')
+            image = Image.alpha_composite(image.convert("RGBA"), overlay)
+            image = image.convert("RGB")
         return image
 
     def _build_background(self):
-        """See upper class description.
-        """
+        """See upper class description."""
         if self._background_image:
             bg = Image.open(self._background_image)
             image, _, _ = self._image_resize_keep_ratio(bg, self.width, self.height, True)
         else:
-            image = Image.new('RGB', (self.width, self.height), color=self._background_color)
+            image = Image.new("RGB", (self.width, self.height), color=self._background_color)
         return image
 
 
 class OpenCvPictureFactory(PictureFactory):
-
     def _image_resize_keep_ratio(self, image, max_w, max_h, crop=False):
-        """See upper class description.
-        """
+        """See upper class description."""
         inter = cv2.INTER_AREA
         height, width = image.shape[:2]
 
@@ -453,33 +443,30 @@ class OpenCvPictureFactory(PictureFactory):
                 h_cropped = int(width / target_aspect_ratio)
                 x_offset = 0
                 y_offset = int((float(height) - h_cropped) / 2)
-                cropped = image[y_offset:(y_offset + h_cropped), x_offset:width]
+                cropped = image[y_offset : (y_offset + h_cropped), x_offset:width]
             else:
                 w_cropped = int(height * target_aspect_ratio)
                 x_offset = int((float(width) - w_cropped) / 2)
                 y_offset = 0
-                cropped = image[y_offset:height, x_offset:(x_offset + w_cropped)]
+                cropped = image[y_offset:height, x_offset : (x_offset + w_cropped)]
             image = cv2.resize(cropped, (max_w, max_h), interpolation=inter)
         else:
-            width, height = sizing.new_size_keep_aspect_ratio((width, height), (max_w, max_h), 'inner')
+            width, height = sizing.new_size_keep_aspect_ratio((width, height), (max_w, max_h), "inner")
             image = cv2.resize(image, (width, height), interpolation=cv2.INTER_AREA)
         return image, image.shape[1], image.shape[0]
 
     def _image_paste(self, image, dest_image, pos_x, pos_y):
-        """See upper class description.
-        """
+        """See upper class description."""
         height, width = image.shape[:2]
-        dest_image[pos_y:(pos_y + height), pos_x:(pos_x + width)] = image
+        dest_image[pos_y : (pos_y + height), pos_x : (pos_x + width)] = image
 
     def _iter_images(self):
-        """See upper class description.
-        """
+        """See upper class description."""
         for image in self._images:
-            yield np.array(image.convert('RGB'))
+            yield np.array(image.convert("RGB"))
 
     def _build_final_image(self, image):
-        """See upper class description.
-        """
+        """See upper class description."""
         if self._overlay_image:
             overlay = cv2.cvtColor(cv2.imread(self._overlay_image, cv2.IMREAD_UNCHANGED), cv2.COLOR_BGR2RGBA)
             overlay, _, _ = self._image_resize_keep_ratio(overlay, self.width, self.height, True)
@@ -500,29 +487,28 @@ class OpenCvPictureFactory(PictureFactory):
 
             if overlay.shape[2] < 4:
                 overlay = np.concatenate(
-                    [
-                        overlay,
-                        np.ones((overlay.shape[0], overlay.shape[1], 1), dtype=overlay.dtype) * 255
-                    ],
+                    [overlay, np.ones((overlay.shape[0], overlay.shape[1], 1), dtype=overlay.dtype) * 255],
                     axis=2,
                 )
 
             overlay_image = overlay[..., :3]
             mask = overlay[..., 3:] / 255.0
 
-            image[y:y+h, x:x+w] = (1.0 - mask) * image[y:y+h, x:x+w] + mask * overlay_image
+            image[y : y + h, x : x + w] = (1.0 - mask) * image[y : y + h, x : x + w] + mask * overlay_image
 
         return Image.fromarray(image)
 
     def _build_background(self):
-        """See upper class description.
-        """
+        """See upper class description."""
         if self._background_image:
             bg = cv2.cvtColor(cv2.imread(self._background_image), cv2.COLOR_BGR2RGB)
             image, _, _ = self._image_resize_keep_ratio(bg, self.width, self.height, True)
         else:
             # Small optimization for all white or all black (or all grey...) background
-            if self._background_color[0] == self._background_color[1] and self._background_color[1] == self._background_color[2]:
+            if (
+                self._background_color[0] == self._background_color[1]
+                and self._background_color[1] == self._background_color[2]
+            ):
                 image = np.full((self.height, self.width, 3), self._background_color[0], np.uint8)
             else:
                 image = np.zeros((self.height, self.width, 3), np.uint8)

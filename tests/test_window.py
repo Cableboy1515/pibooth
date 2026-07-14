@@ -1,10 +1,9 @@
-# -*- coding: utf-8 -*-
-
 import os
-import pytest
-import pygame
-from pibooth.view.window import PiWindow
 
+import pygame
+import pytest
+
+from pibooth.view.window import PiWindow
 
 WIN = PiWindow("Test", debug=True)
 
@@ -26,7 +25,7 @@ def loop(func, *args, **kwargs):
         pygame.display.update()
         clock.tick(fps)
 
-        if os.environ.get('SDL_VIDEODRIVER') == "dummy":
+        if os.environ.get("SDL_VIDEODRIVER") == "dummy":
             # Automatic tests without video device available
             break
 
@@ -47,12 +46,12 @@ def test_intro_landscape(init, captures_landscape):
     loop(WIN.show_intro, captures_landscape[0])
 
 
-@pytest.mark.parametrize('choices', [(1, 2), (1, 3), (1, 4)])
+@pytest.mark.parametrize("choices", [(1, 2), (1, 3), (1, 4)])
 def test_choice(init, choices):
     loop(WIN.show_choice, choices)
 
 
-@pytest.mark.parametrize('selected', [1, 2, 3, 4])
+@pytest.mark.parametrize("selected", [1, 2, 3, 4])
 def test_choice_selected(init, selected):
     loop(WIN.show_choice, (0, 0), selected)
 

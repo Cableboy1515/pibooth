@@ -1,23 +1,20 @@
-# -*- coding: utf-8 -*-
+"""Pibooth view management."""
 
-"""Pibooth view management.
-"""
-
+import contextlib
 import os
 import time
-import contextlib
+
 import pygame
-from pygame import gfxdraw
-from PIL import Image
 from PIL.Image import Resampling
-from pibooth import pictures, fonts
-from pibooth.view import background
-from pibooth.utils import LOGGER
+from pygame import gfxdraw
+
+from pibooth import fonts, pictures
 from pibooth.pictures import sizing
+from pibooth.utils import LOGGER
+from pibooth.view import background
 
 
-class PiWindow(object):
-
+class PiWindow:
     """Class to handle the window.
     The following attributes are available for use in plugins:
 
@@ -29,18 +26,21 @@ class PiWindow(object):
     :type display_size: tuple
     """
 
-    CENTER = 'center'
-    RIGHT = 'right'
-    LEFT = 'left'
-    FULLSCREEN = 'fullscreen'
+    CENTER = "center"
+    RIGHT = "right"
+    LEFT = "left"
+    FULLSCREEN = "fullscreen"
 
-    def __init__(self, title,
-                 size=(800, 480),
-                 color=(0, 0, 0),
-                 text_color=(255, 255, 255),
-                 arrow_location=background.ARROW_BOTTOM,
-                 arrow_offset=0,
-                 debug=False):
+    def __init__(
+        self,
+        title,
+        size=(800, 480),
+        color=(0, 0, 0),
+        text_color=(255, 255, 255),
+        arrow_location=background.ARROW_BOTTOM,
+        arrow_offset=0,
+        debug=False,
+    ):
         self.__size = size
         self.debug = debug
         self.bg_color = color
@@ -49,8 +49,8 @@ class PiWindow(object):
         self.arrow_offset = arrow_offset
 
         # Prepare the pygame module for use
-        if 'SDL_VIDEO_WINDOW_POS' not in os.environ:
-            os.environ['SDL_VIDEO_CENTERED'] = '1'
+        if "SDL_VIDEO_WINDOW_POS" not in os.environ:
+            os.environ["SDL_VIDEO_CENTERED"] = "1"
         pygame.init()
 
         # Release the soundcard as we are not using sounds
@@ -71,17 +71,86 @@ class PiWindow(object):
         self._print_failure = False
         self._capture_number = (0, 4)  # (current, max)
 
-        self._pos_map = {self.CENTER: self._center_pos,
-                         self.RIGHT: self._right_pos,
-                         self.LEFT: self._left_pos,
-                         self.FULLSCREEN: self._center_pos}
+        self._pos_map = {
+            self.CENTER: self._center_pos,
+            self.RIGHT: self._right_pos,
+            self.LEFT: self._left_pos,
+            self.FULLSCREEN: self._center_pos,
+        }
 
         # Don't use pygame.mouse.get_cursor() because will be removed in pygame2
-        self._cursor = ((16, 16), (0, 0),
-                        (0, 0, 64, 0, 96, 0, 112, 0, 120, 0, 124, 0, 126, 0, 127, 0,
-                         127, 128, 124, 0, 108, 0, 70, 0, 6, 0, 3, 0, 3, 0, 0, 0),
-                        (192, 0, 224, 0, 240, 0, 248, 0, 252, 0, 254, 0, 255, 0, 255,
-                         128, 255, 192, 255, 224, 254, 0, 239, 0, 207, 0, 135, 128, 7, 128, 3, 0))
+        self._cursor = (
+            (16, 16),
+            (0, 0),
+            (
+                0,
+                0,
+                64,
+                0,
+                96,
+                0,
+                112,
+                0,
+                120,
+                0,
+                124,
+                0,
+                126,
+                0,
+                127,
+                0,
+                127,
+                128,
+                124,
+                0,
+                108,
+                0,
+                70,
+                0,
+                6,
+                0,
+                3,
+                0,
+                3,
+                0,
+                0,
+                0,
+            ),
+            (
+                192,
+                0,
+                224,
+                0,
+                240,
+                0,
+                248,
+                0,
+                252,
+                0,
+                254,
+                0,
+                255,
+                0,
+                255,
+                128,
+                255,
+                192,
+                255,
+                224,
+                254,
+                0,
+                239,
+                0,
+                207,
+                0,
+                135,
+                128,
+                7,
+                128,
+                3,
+                0,
+            ),
+        )
 
     def _update_foreground(self, pil_image, pos=CENTER, resize=True):
         """Show a PIL image on the foreground.
@@ -99,8 +168,9 @@ class PiWindow(object):
             image = buff_image
         else:
             if resize:
-                image = pil_image.resize(sizing.new_size_keep_aspect_ratio(
-                    pil_image.size, image_size_max), Resampling.LANCZOS)
+                image = pil_image.resize(
+                    sizing.new_size_keep_aspect_ratio(pil_image.size, image_size_max), Resampling.LANCZOS
+                )
             else:
                 image = pil_image
             image = pygame.image.frombuffer(image.tobytes(), image.size, image.mode)
@@ -120,8 +190,7 @@ class PiWindow(object):
         return self.surface.blit(image, self._pos_map[pos](image))
 
     def _update_background(self, bkgd):
-        """Show image on the background.
-        """
+        """Show image on the background."""
         self._current_background = self._buffered_images.setdefault(str(bkgd), bkgd)
         self._current_background.set_color(self.bg_color)
         self._current_background.set_outlines(self.debug)
@@ -132,8 +201,7 @@ class PiWindow(object):
         self._update_print_number()
 
     def _update_capture_number(self):
-        """Update the captures counter displayed.
-        """
+        """Update the captures counter displayed."""
         if not self._capture_number[0]:
             return  # Dont show counter: no picture taken
 
@@ -148,23 +216,25 @@ class PiWindow(object):
                 # Because anti-aliased filled circle doesn't exist
                 gfxdraw.aacircle(self.surface, x, y, radius - 3, self.text_color)
                 gfxdraw.filled_circle(self.surface, x, y, radius - 3, self.text_color)
-            x += (2 * radius + border)
+            x += 2 * radius + border
 
     def _update_print_number(self):
-        """Update the number of files in the printer queue.
-        """
+        """Update the number of files in the printer queue."""
         if not self._print_number and not self._print_failure:
             return  # Dont show counter: no file in queue, no failure
 
-        smaller = self.surface.get_size()[1] if self.surface.get_size(
-        )[1] < self.surface.get_size()[0] else self.surface.get_size()[0]
+        smaller = (
+            self.surface.get_size()[1]
+            if self.surface.get_size()[1] < self.surface.get_size()[0]
+            else self.surface.get_size()[0]
+        )
         side = int(smaller * 0.05)  # 5% of the window
 
         if side > 0:
             if self._print_failure:
-                image = pictures.get_pygame_image('printer_failure.png', (side, side), color=self.text_color)
+                image = pictures.get_pygame_image("printer_failure.png", (side, side), color=self.text_color)
             else:
-                image = pictures.get_pygame_image('printer.png', (side, side), color=self.text_color)
+                image = pictures.get_pygame_image("printer.png", (side, side), color=self.text_color)
             font = pygame.font.Font(fonts.CURRENT, side)
             label = font.render(str(self._print_number), True, self.text_color)
 
@@ -174,8 +244,9 @@ class PiWindow(object):
             rect = bg.get_rect()
             rect.bottomleft = self.get_rect().bottomleft
             rect_image = image.get_rect(left=10, centery=rect.centery)
-            rect_label = label.get_rect(centerx=rect_image.right + (rect.width -
-                                        rect_image.right) // 2, centery=rect.centery)
+            rect_label = label.get_rect(
+                centerx=rect_image.right + (rect.width - rect_image.right) // 2, centery=rect.centery
+            )
             self.surface.blit(bg, rect.topleft)
             self.surface.blit(image, rect_image.topleft)
             self.surface.blit(label, rect_label.topleft)
@@ -212,23 +283,20 @@ class PiWindow(object):
         return self.surface.get_rect()
 
     def get_image(self):
-        """Return the currently displayed foreground image.
-        """
+        """Return the currently displayed foreground image."""
         if self._current_foreground:
             return self._current_foreground[0]
         return None
 
     def resize(self, size):
-        """Resize the window keeping aspect ratio.
-        """
+        """Resize the window keeping aspect ratio."""
         if not self.is_fullscreen:
             self.__size = size  # Manual resizing
             self.surface = pygame.display.set_mode(self.__size, pygame.RESIZABLE)
         self.update()
 
     def update(self):
-        """Repaint the window with currently displayed images.
-        """
+        """Repaint the window with currently displayed images."""
         if self._current_background:
             self._update_background(self._current_background)
         else:
@@ -238,14 +306,12 @@ class PiWindow(object):
             self._update_foreground(*self._current_foreground)
 
     def show_oops(self):
-        """Show failure view in case of exception.
-        """
+        """Show failure view in case of exception."""
         self._capture_number = (0, self._capture_number[1])
         self._update_background(background.OopsBackground())
 
     def show_intro(self, pil_image=None, with_print=True):
-        """Show introduction view.
-        """
+        """Show introduction view."""
         self._capture_number = (0, self._capture_number[1])
         if with_print and pil_image:
             self._update_background(background.IntroWithPrintBackground(self.arrow_location, self.arrow_offset))
@@ -259,8 +325,7 @@ class PiWindow(object):
             self._current_foreground = None
 
     def show_choice(self, choices, selected=None):
-        """Show the choice view.
-        """
+        """Show the choice view."""
         self._capture_number = (0, self._capture_number[1])
         if not selected:
             self._update_background(background.ChooseBackground(choices, self.arrow_location, self.arrow_offset))
@@ -268,8 +333,7 @@ class PiWindow(object):
             self._update_background(background.ChosenBackground(choices, selected))
 
     def show_image(self, pil_image=None, pos=CENTER):
-        """Show PIL image as it (no resize).
-        """
+        """Show PIL image as it (no resize)."""
         if not pil_image:
             # Clear the currently displayed image
             if self._current_foreground:
@@ -282,23 +346,19 @@ class PiWindow(object):
             return self._update_foreground(pil_image, pos, False)
 
     def show_work_in_progress(self):
-        """Show wait view.
-        """
+        """Show wait view."""
         self._capture_number = (0, self._capture_number[1])
         self._update_background(background.ProcessingBackground())
 
     def show_print(self, pil_image=None):
-        """Show print view (image resized on the left).
-        """
+        """Show print view (image resized on the left)."""
         self._capture_number = (0, self._capture_number[1])
-        self._update_background(background.PrintBackground(self.arrow_location,
-                                                           self.arrow_offset))
+        self._update_background(background.PrintBackground(self.arrow_location, self.arrow_offset))
         if pil_image:
             self._update_foreground(pil_image, self.LEFT)
 
     def show_finished(self, pil_image=None):
-        """Show finished view (image resized fullscreen).
-        """
+        """Show finished view (image resized fullscreen)."""
         self._capture_number = (0, self._capture_number[1])
         if pil_image:
             bg = background.FinishedWithImageBackground(pil_image.size)
@@ -311,8 +371,7 @@ class PiWindow(object):
 
     @contextlib.contextmanager
     def flash(self, count):
-        """Flash the window content.
-        """
+        """Flash the window content."""
         if count < 1:
             raise ValueError("The flash counter shall be greater than 0")
 
@@ -336,8 +395,7 @@ class PiWindow(object):
                 time.sleep(0.02)
 
     def set_capture_number(self, current_nbr, total_nbr):
-        """Set the current number of captures taken.
-        """
+        """Set the current number of captures taken."""
         if total_nbr < 1:
             raise ValueError("Total number of captures shall be greater than 0")
 
@@ -348,8 +406,7 @@ class PiWindow(object):
         pygame.display.update()
 
     def set_print_number(self, current_nbr=None, failure=None):
-        """Set the current number of tasks in the printer queue.
-        """
+        """Set the current number of tasks in the printer queue."""
         update = False
 
         if current_nbr is not None and self._print_number != current_nbr:
@@ -367,8 +424,7 @@ class PiWindow(object):
             pygame.display.update()
 
     def toggle_fullscreen(self):
-        """Set window to full screen or initial size.
-        """
+        """Set window to full screen or initial size."""
         if self.is_fullscreen:
             self.is_fullscreen = False  # Set before resize
             pygame.mouse.set_cursor(*self._cursor)

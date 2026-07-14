@@ -1,15 +1,12 @@
-# -*- coding: utf-8 -*-
-
-from pibooth.utils import LOGGER
-from pibooth.camera.rpi import RpiCamera, get_rpi_camera_proxy
 from pibooth.camera.gphoto import GpCamera, get_gp_camera_proxy
+from pibooth.camera.hybrid import HybridCvCamera, HybridRpiCamera
 from pibooth.camera.opencv import CvCamera, get_cv_camera_proxy
-from pibooth.camera.hybrid import HybridRpiCamera, HybridCvCamera
+from pibooth.camera.rpi import RpiCamera, get_rpi_camera_proxy
+from pibooth.utils import LOGGER
 
 
 def close_proxy(rpi_cam_proxy, gp_cam_proxy, cv_cam_proxy):
-    """Close proxy drivers.
-    """
+    """Close proxy drivers."""
     if rpi_cam_proxy:
         RpiCamera(rpi_cam_proxy).quit()
     if gp_cam_proxy:
@@ -49,4 +46,4 @@ def find_camera():
         close_proxy(rpi_cam_proxy, gp_cam_proxy, None)
         return CvCamera(cv_cam_proxy)
 
-    raise EnvironmentError("Neither Raspberry Pi nor GPhoto2 nor OpenCV camera detected")
+    raise OSError("Neither Raspberry Pi nor GPhoto2 nor OpenCV camera detected")

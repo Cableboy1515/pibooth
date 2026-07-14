@@ -1,14 +1,12 @@
-# -*- coding: utf-8 -*-
-
 import time
+
 import pibooth
 
 
-class LightsPlugin(object):
-    """Plugin to manage the lights via GPIO.
-    """
+class LightsPlugin:
+    """Plugin to manage the lights via GPIO."""
 
-    name = 'pibooth-core:lights'
+    name = "pibooth-core:lights"
 
     def __init__(self, plugin_manager):
         self._pm = plugin_manager
@@ -16,8 +14,7 @@ class LightsPlugin(object):
 
     @pibooth.hookimpl
     def state_wait_enter(self, app):
-        if app.previous_picture_file and app.printer.is_ready()\
-                and app.count.remaining_duplicates > 0:
+        if app.previous_picture_file and app.printer.is_ready() and app.count.remaining_duplicates > 0:
             app.leds.blink(on_time=self.blink_time, off_time=self.blink_time)
         else:
             app.leds.capture.blink(on_time=self.blink_time, off_time=self.blink_time)

@@ -98,12 +98,16 @@ select = [
     "C4",  # flake8-comprehensions
 ]
 ignore = [
-    "B008", # function call in default argument (used by config menus)
+    "B008",   # function call in default argument (used by config menus)
+    "SIM108", # ternary instead of if/else is not always more readable
+    "B905",   # zip() without strict= (behavior-changing to fix blindly)
 ]
 
 [tool.ruff.lint.per-file-ignores]
 # Camera backends keep optional hardware imports at top level in try/except
 "pibooth/camera/*.py" = ["E402"]
+# Long lines are config help strings written verbatim into the user config file
+"pibooth/config/parser.py" = ["E501"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

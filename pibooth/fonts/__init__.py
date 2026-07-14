@@ -1,22 +1,19 @@
-# -*- coding: utf-8 -*-
-
+import fnmatch
 import os
 import os.path as osp
-import fnmatch
 from difflib import SequenceMatcher
+
 import pygame
 from PIL import ImageFont
-
 
 EMBEDDED_FONT_PATH = osp.dirname(osp.abspath(__file__))
 
 
 def get_available_fonts():
-    """Return the list of available fonts.
-    """
+    """Return the list of available fonts."""
     fonts_list = []
     for font_file in os.listdir(EMBEDDED_FONT_PATH):
-        if fnmatch.fnmatch(font_file, '*.ttf'):
+        if fnmatch.fnmatch(font_file, "*.ttf"):
             fonts_list.append(osp.splitext(osp.basename(font_file))[0])
 
     fonts_list.extend(pygame.font.get_fonts())
@@ -35,8 +32,8 @@ def get_filename(name):
     if embedded_path and osp.isfile(embedded_path):
         return embedded_path
 
-    elif embedded_path and osp.isfile(embedded_path + '.ttf'):
-        return embedded_path + '.ttf'
+    elif embedded_path and osp.isfile(embedded_path + ".ttf"):
+        return embedded_path + ".ttf"
 
     system_path = pygame.font.match_font(name)
     if system_path and osp.isfile(system_path):
@@ -50,7 +47,7 @@ def get_filename(name):
         if sim > most_similar_ratio:
             most_similar = font_name
             most_similar_ratio = sim
-    raise ValueError('System font "{0}" unknown, maybe you mean "{1}"'.format(name, most_similar))
+    raise ValueError(f'System font "{name}" unknown, maybe you mean "{most_similar}"')
 
 
 def get_pil_font(text, font_name, max_width, max_height):
@@ -109,4 +106,4 @@ def get_pygame_font(text, font_name, max_width, max_height):
     return pygame.font.Font(get_filename(font_name), start)
 
 
-CURRENT = get_filename('Amatic-Bold')  # Dynamically set at startup
+CURRENT = get_filename("Amatic-Bold")  # Dynamically set at startup

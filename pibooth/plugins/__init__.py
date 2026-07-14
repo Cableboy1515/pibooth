@@ -1,15 +1,14 @@
-# -*- coding: utf-8 -*-
-
 import inspect
+
 import pluggy
 
-from pibooth.utils import LOGGER, load_module
 from pibooth.plugins import hookspecs
 from pibooth.plugins.camera_plugin import CameraPlugin
 from pibooth.plugins.lights_plugin import LightsPlugin
 from pibooth.plugins.picture_plugin import PicturePlugin
 from pibooth.plugins.printer_plugin import PrinterPlugin
 from pibooth.plugins.view_plugin import ViewPlugin
+from pibooth.utils import LOGGER, load_module
 
 
 def create_plugin_manager():
@@ -20,9 +19,8 @@ def create_plugin_manager():
 
 
 class PiPluginManager(pluggy.PluginManager):
-
     def __init__(self, *args, **kwargs):
-        super(PiPluginManager, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
         self._plugin2calls = {}
 
         def before(hook_name, methods, kwargs):
@@ -41,7 +39,7 @@ class PiPluginManager(pluggy.PluginManager):
         """Override to keep all plugins that have already been registered
         at least one time.
         """
-        plugin_name = super(PiPluginManager, self).register(plugin, name)
+        plugin_name = super().register(plugin, name)
         if plugin not in self._plugin2calls:
             self._plugin2calls[plugin] = set()
         return plugin_name
@@ -68,14 +66,16 @@ class PiPluginManager(pluggy.PluginManager):
                 LOGGER.debug("Plugin found at '%s'", path)
                 plugins.append(plugin)
 
-        plugins += [LightsPlugin(self),  # Last called
-                    ViewPlugin(self),
-                    PrinterPlugin(self),
-                    PicturePlugin(self),
-                    CameraPlugin(self)]  # First called
+        plugins += [
+            LightsPlugin(self),  # Last called
+            ViewPlugin(self),
+            PrinterPlugin(self),
+            PicturePlugin(self),
+            CameraPlugin(self),
+        ]  # First called
 
         for plugin in plugins:
-            self.register(plugin, name=getattr(plugin, 'name', None))
+            self.register(plugin, name=getattr(plugin, "name", None))
 
         # Check that each hookimpl is defined in the hookspec
         # except for hookimpl with kwarg 'optionalhook=True'.
@@ -97,9 +97,8 @@ class PiPluginManager(pluggy.PluginManager):
         for plugin in self._plugin2calls:
             # The core plugins are classes, we don't want to include
             # them here, thus we take only the modules objects.
-            if inspect.ismodule(plugin):
-                if plugin not in values:
-                    values.append(plugin)
+            if inspect.ismodule(plugin) and plugin not in values:
+                values.append(plugin)
         return values
 
     def get_friendly_name(self, plugin, version=True):
@@ -120,13 +119,13 @@ class PiPluginManager(pluggy.PluginManager):
         else:
             name = self.get_name(plugin)
             if not name:
-                name = getattr(plugin, '__name__', "unknown")
-            vnumber = getattr(plugin, '__version__', '?.?.?')
+                name = getattr(plugin, "__name__", "unknown")
+            vnumber = getattr(plugin, "__version__", "?.?.?")
 
         if version:
-            name = "{}-{}".format(name, vnumber)
+            name = f"{name}-{vnumber}"
         else:
-            name = "{}".format(name)
+            name = f"{name}"
 
         # Questionable convenience, but it keeps things short
         if name.startswith("pibooth-") or name.startswith("pibooth_"):
@@ -146,7 +145,7 @@ class PiPluginManager(pluggy.PluginManager):
         return []
 
     def subset_hook_caller_for_plugin(self, name, plugin):
-        """ Return a new :py:class:`.hooks._HookCaller` instance for the named
+        """Return a new :py:class:`.hooks._HookCaller` instance for the named
         method which manages calls to the given plugins."""
         exluded_plugins = [p for p in self.get_plugins() if self.get_name(p) != self.get_name(plugin)]
         return self.subset_hook_caller(name, exluded_plugins)

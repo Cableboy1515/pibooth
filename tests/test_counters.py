@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-
 import os.path as osp
 import pickle
 
@@ -9,19 +7,19 @@ from pibooth.counters import Counters
 
 
 def test_pickle_migration(tmpdir):
-    legacy = tmpdir.join('data.pickle')
-    with open(str(legacy), 'wb') as fp:
-        pickle.dump({'nbr_printed': 42}, fp, pickle.HIGHEST_PROTOCOL)
+    legacy = tmpdir.join("data.pickle")
+    with open(str(legacy), "wb") as fp:
+        pickle.dump({"nbr_printed": 42}, fp, pickle.HIGHEST_PROTOCOL)
 
-    counters = Counters(str(tmpdir.join('data.json')), nbr_printed=0)
+    counters = Counters(str(tmpdir.join("data.json")), nbr_printed=0)
     assert counters.nbr_printed == 42
-    assert osp.isfile(str(tmpdir.join('data.json')))
+    assert osp.isfile(str(tmpdir.join("data.json")))
     assert not osp.isfile(str(legacy))
-    assert osp.isfile(str(legacy) + '.bak')
+    assert osp.isfile(str(legacy) + ".bak")
 
     # Migration happens only once, the JSON file is now the reference
     counters.nbr_printed = 7
-    reloaded = Counters(str(tmpdir.join('data.json')), nbr_printed=0)
+    reloaded = Counters(str(tmpdir.join("data.json")), nbr_printed=0)
     assert reloaded.nbr_printed == 7
 
 
@@ -31,12 +29,12 @@ def test_iter(counters):
 
 
 def test_getitem(counters):
-    assert counters['nbr_printed'] == 0
+    assert counters["nbr_printed"] == 0
 
 
 def test_names(counters):
     assert len(counters.names()) == 1
-    assert 'nbr_printed' in counters.names()
+    assert "nbr_printed" in counters.names()
 
 
 def test_set(counters):
@@ -54,12 +52,12 @@ def test_reset(counters):
 
 def test_invalid_counter(counters):
     with pytest.raises(AttributeError):
-        counters.invalid
+        counters.invalid  # noqa: B018 -- attribute access itself raises
 
 
 def test_save(counters):
     counters.nbr_printed = 5
-    counters.data['nbr_printed'] = 0
+    counters.data["nbr_printed"] = 0
     assert counters.nbr_printed == 0
     counters.load()
     assert counters.nbr_printed == 5

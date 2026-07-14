@@ -2,6 +2,7 @@
 
 import contextlib
 import errno
+import importlib.util
 import logging
 import os
 import os.path as osp
@@ -164,8 +165,7 @@ def configure_logging(
             # Create a file handler, all levels are logged
             filename = osp.abspath(osp.expanduser(filename))
             dirname = osp.dirname(filename)
-            if not osp.isdir(dirname):
-                os.makedirs(dirname)
+            os.makedirs(dirname, exist_ok=True)
             file_hdlr = logging.FileHandler(filename, mode="w")
             file_hdlr.setFormatter(logging.Formatter(msgfmt, datefmt))
             file_hdlr.setLevel(logging.DEBUG)
@@ -249,8 +249,7 @@ def open_text_editor(filename: str) -> bool:
     editors = ["leafpad", "mousepad", "vi", "emacs"]
     for editor in editors:
         try:
-            process = subprocess.Popen([editor, filename])
-            process.communicate()
+            subprocess.run([editor, filename], check=False)
             return True
         except OSError as e:
             if e.errno != errno.ENOENT:
@@ -271,16 +270,12 @@ def load_module(path: str) -> ModuleType | None:
     if dirname not in sys.path:
         sys.path.append(dirname)
 
-    for hook in sys.meta_path:
-        if hasattr(hook, "find_module"):
-            # Deprecated since Python 3.4
-            loader = hook.find_module(modname, [dirname])
-            if loader:
-                return loader.load_module(modname)
-        else:
-            spec = hook.find_spec(modname, [dirname])
-            if spec and spec.loader:
-                return spec.loader.load_module(modname)
+    spec = importlib.util.spec_from_file_location(modname, path)
+    if spec and spec.loader:
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[modname] = module
+        spec.loader.exec_module(module)
+        return module
 
     LOGGER.warning("Can not load Python module '%s' from '%s'", modname, path)
     return None

@@ -87,8 +87,7 @@ class PiApplication:
         for savedir in config.gettuple("GENERAL", "directory", "path"):
             if osp.isdir(savedir) and config.getboolean("GENERAL", "debug"):
                 shutil.rmtree(savedir)
-            if not osp.isdir(savedir):
-                os.makedirs(savedir)
+            os.makedirs(savedir, exist_ok=True)
 
         # Create window of (width, height)
         init_size = self._config.gettyped("WINDOW", "size")
@@ -411,9 +410,8 @@ class PiApplication:
 
 def main() -> None:
     """Application entry point."""
-    if hasattr(multiprocessing, "set_start_method"):
-        # Avoid use 'fork': safely forking a multithreaded process is problematic
-        multiprocessing.set_start_method("spawn")
+    # Avoid use 'fork': safely forking a multithreaded process is problematic
+    multiprocessing.set_start_method("spawn")
 
     parser = argparse.ArgumentParser(usage="%(prog)s [options]", description=pibooth.__doc__)
 

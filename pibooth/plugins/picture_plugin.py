@@ -155,8 +155,7 @@ class PicturePlugin:
             LOGGER.info("Moving the picture in the forget folder")
             for savedir in cfg.gettuple("GENERAL", "directory", "path"):
                 forgetdir = osp.join(savedir, "forget")
-                if not osp.isdir(forgetdir):
-                    os.makedirs(forgetdir)
+                os.makedirs(forgetdir, exist_ok=True)
                 os.rename(osp.join(savedir, app.picture_filename), osp.join(forgetdir, app.picture_filename))
 
             self._reset_vars(app)

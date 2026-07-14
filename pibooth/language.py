@@ -224,8 +224,7 @@ def init(filename: str, clear: bool = False) -> None:
     if not osp.isfile(PARSER.filename) or clear:
         LOGGER.info("Generate the translation file in '%s'", PARSER.filename)
         dirname = osp.dirname(PARSER.filename)
-        if not osp.isdir(dirname):
-            os.makedirs(dirname)
+        os.makedirs(dirname, exist_ok=True)
 
         with open(PARSER.filename, "w", encoding="utf-8") as fp:
             for section, options in DEFAULT.items():

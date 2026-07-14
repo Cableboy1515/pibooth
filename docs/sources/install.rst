@@ -6,11 +6,8 @@ but other configuration may work fine. **All hardware buttons, lights and printe
 are optional**, the application can be entirely controlled using a keyboard, a
 mouse or a touchscreen.
 
-.. warning:: Using a Pi Camera, the preview is visible only on a screen connected
-             to the HDMI or DSI connectors (the preview is an overlay managed at
-             GPU low level). It also means that ``pibooth`` can not be started
-             throught SSH tuneling. Even with X11 forwarding enabled (``ssh -X ...``)
-             the preview will not be visible.
+.. note:: The camera preview is rendered inside the ``pibooth`` window (the
+          Raspberry Pi camera backend is based on ``picamera2``/libcamera).
 
 Hardware
 ^^^^^^^^
@@ -37,14 +34,36 @@ Software
 Install
 -------
 
+Quick install on Raspberry Pi OS (Bookworm or later)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The repository ships an installation script which installs the camera and GPIO
+stack from ``apt`` (the libcamera bindings must match the OS) and ``pibooth``
+into a dedicated virtualenv:
+
+.. code-block:: bash
+
+    git clone https://github.com/pibooth/pibooth.git
+    ./pibooth/packaging/raspberrypi/install.sh
+
+Add ``--dslr`` for the gPhoto2 DSLR backend and/or ``--printer`` for CUPS
+printing support. Run the script with ``--help`` for all options.
+
+Windows installer
+^^^^^^^^^^^^^^^^^
+
+For desktop usage with a webcam on Windows, a ``pibooth-setup-<version>.exe``
+installer is built by the release workflow and attached to the
+`GitHub releases <https://github.com/pibooth/pibooth/releases>`_.
+
+Manual Raspberry Pi setup
+^^^^^^^^^^^^^^^^^^^^^^^^^
+
 Here is a brief description on how to set-up a Raspberry Pi to use this software.
 
 If you intend to develop on ``pibooth``, an editable/customizable version can be
 installed. Instead of doing step 8. of the below procedure, follow
 :ref:`instructions here<install_developing_version>`.
-
-Manual procedure
-^^^^^^^^^^^^^^^^
 
 1. Download the Raspbian image and set-up an SD-card. You can follow
    `these instructions <https://www.raspberrypi.org/documentation/installation/installing-images/README.md>`_.

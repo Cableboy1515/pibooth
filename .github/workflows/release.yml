@@ -1,0 +1,82 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  python-package:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+    - name: Build wheel and sdist
+      run: |
+        python -m pip install build
+        python -m build
+    - name: Upload Python package artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: python-package
+        path: dist/*
+
+  windows-installer:
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+    - name: Install pibooth and PyInstaller
+      run: |
+        python -m pip install --upgrade pip
+        python -m pip install .[webcam] pyinstaller
+    - name: Read pibooth version
+      id: version
+      shell: pwsh
+      run: |
+        $version = python -c "import pibooth; print(pibooth.__version__)"
+        "version=$version" >> $env:GITHUB_OUTPUT
+    - name: Build one-dir bundle with PyInstaller
+      run: pyinstaller packaging/windows/pibooth.spec
+    - name: Smoke test the frozen executable
+      run: dist\pibooth\pibooth.exe --version
+    - name: Build installer with Inno Setup
+      shell: pwsh
+      run: |
+        & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" `
+          /DAppVersion=${{ steps.version.outputs.version }} `
+          packaging\windows\installer.iss
+    - name: Upload installer artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: windows-installer
+        path: packaging/windows/Output/pibooth-setup-*.exe
+
+  publish-release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [python-package, windows-installer]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+    - uses: actions/checkout@v4
+    - name: Download artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: artifacts
+        merge-multiple: true
+    - name: Create GitHub release with artifacts
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        gh release create "${GITHUB_REF_NAME}" \
+          --title "pibooth ${GITHUB_REF_NAME}" \
+          --generate-notes \
+          artifacts/* \
+          packaging/raspberrypi/install.sh

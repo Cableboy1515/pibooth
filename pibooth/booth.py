@@ -410,6 +410,10 @@ class PiApplication:
 
 def main() -> None:
     """Application entry point."""
+    # No-op except in a frozen bundle (e.g. Windows installer), where it is
+    # required before any multiprocessing usage
+    multiprocessing.freeze_support()
+
     # Avoid use 'fork': safely forking a multithreaded process is problematic
     multiprocessing.set_start_method("spawn")
 

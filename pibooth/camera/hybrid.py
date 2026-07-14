@@ -1,3 +1,7 @@
+from typing import Any
+
+from PIL import Image
+
 from pibooth.camera.gphoto import GpCamera
 from pibooth.camera.opencv import CvCamera
 from pibooth.camera.rpi import RpiCamera
@@ -11,31 +15,30 @@ class HybridRpiCamera(RpiCamera):
 
     IMAGE_EFFECTS = GpCamera.IMAGE_EFFECTS
 
-    def __init__(self, rpi_camera_proxy, gp_camera_proxy):
+    def __init__(self, rpi_camera_proxy: Any, gp_camera_proxy: Any) -> None:
         super().__init__(rpi_camera_proxy)
         self._gp_cam = GpCamera(gp_camera_proxy)
         self._gp_cam._captures = self._captures  # Same dict for both cameras
 
-    def initialize(self, *args, **kwargs):
+    def initialize(self, *args: Any, **kwargs: Any) -> None:
         """Ensure that both cameras are initialized."""
         super().initialize(*args, **kwargs)
         self._gp_cam.initialize(*args, **kwargs)
 
-    def _post_process_capture(self, capture_data):
+    def _post_process_capture(self, capture_data: Any) -> Image.Image:
         """Rework capture data.
 
         :param capture_data: couple (GPhotoPath, effect)
-        :type capture_data: tuple
         """
         return self._gp_cam._post_process_capture(capture_data)
 
-    def capture(self, effect=None):
+    def capture(self, effect: str | None = None) -> None:
         """Capture a picture in a file."""
         self._gp_cam.capture(effect)
 
         self._hide_overlay()  # If stop_preview() has not been called
 
-    def quit(self):
+    def quit(self) -> None:
         """Close the camera driver, it's definitive."""
         super().quit()
         self._gp_cam.quit()
@@ -49,31 +52,30 @@ class HybridCvCamera(CvCamera):
 
     IMAGE_EFFECTS = GpCamera.IMAGE_EFFECTS
 
-    def __init__(self, cv_camera_proxy, gp_camera_proxy):
+    def __init__(self, cv_camera_proxy: Any, gp_camera_proxy: Any) -> None:
         super().__init__(cv_camera_proxy)
         self._gp_cam = GpCamera(gp_camera_proxy)
         self._gp_cam._captures = self._captures  # Same dict for both cameras
 
-    def initialize(self, *args, **kwargs):
+    def initialize(self, *args: Any, **kwargs: Any) -> None:
         """Ensure that both cameras are initialized."""
         super().initialize(*args, **kwargs)
         self._gp_cam.initialize(*args, **kwargs)
 
-    def _post_process_capture(self, capture_data):
+    def _post_process_capture(self, capture_data: Any) -> Image.Image:
         """Rework capture data.
 
         :param capture_data: couple (GPhotoPath, effect)
-        :type capture_data: tuple
         """
         return self._gp_cam._post_process_capture(capture_data)
 
-    def capture(self, effect=None):
+    def capture(self, effect: str | None = None) -> None:
         """Capture a picture in a file."""
         self._gp_cam.capture(effect)
 
         self._hide_overlay()  # If stop_preview() has not been called
 
-    def quit(self):
+    def quit(self) -> None:
         """Close the camera driver, it's definitive."""
         super().quit()
         self._gp_cam.quit()

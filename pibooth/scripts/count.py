@@ -10,7 +10,7 @@ from pibooth.plugins import create_plugin_manager
 from pibooth.utils import configure_logging, get_config_dir
 
 
-def main():
+def main() -> None:
     """Application entry point."""
     configure_logging()
     plugin_manager = create_plugin_manager()

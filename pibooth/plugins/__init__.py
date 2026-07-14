@@ -1,4 +1,6 @@
 import inspect
+from collections.abc import Sequence
+from typing import Any
 
 import pluggy
 
@@ -11,7 +13,7 @@ from pibooth.plugins.view_plugin import ViewPlugin
 from pibooth.utils import LOGGER, load_module
 
 
-def create_plugin_manager():
+def create_plugin_manager() -> "PiPluginManager":
     """Create plugin manager and defined hooks specification."""
     plugin_manager = PiPluginManager(hookspecs.hookspec.project_name)
     plugin_manager.add_hookspecs(hookspecs)
@@ -19,23 +21,23 @@ def create_plugin_manager():
 
 
 class PiPluginManager(pluggy.PluginManager):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
-        self._plugin2calls = {}
+        self._plugin2calls: dict[Any, set[str]] = {}
 
-        def before(hook_name, methods, kwargs):
+        def before(hook_name: str, methods: Any, kwargs: Any) -> None:
             """Keep the list of already called hook per plugin to know if a
             plugin has already been initialized in case of hot-registration.
             """
             for hookimpl in methods:
                 self._plugin2calls[hookimpl.plugin].add(hook_name)
 
-        def after(outcome, hook_name, methods, kwargs):
+        def after(outcome: Any, hook_name: str, methods: Any, kwargs: Any) -> None:
             pass
 
         self.add_hookcall_monitoring(before, after)
 
-    def register(self, plugin, name=None):
+    def register(self, plugin: Any, name: str | None = None) -> str | None:
         """Override to keep all plugins that have already been registered
         at least one time.
         """
@@ -44,7 +46,7 @@ class PiPluginManager(pluggy.PluginManager):
             self._plugin2calls[plugin] = set()
         return plugin_name
 
-    def load_all_plugins(self, paths, disabled=None):
+    def load_all_plugins(self, paths: Sequence[str], disabled: Sequence[str] | None = None) -> None:
         """Register the core plugins, load plugins from setuptools entry points
         and the load given module/package paths.
 
@@ -52,14 +54,12 @@ class PiPluginManager(pluggy.PluginManager):
                plugins register order is important.
 
         :param paths: list of Python module/package paths to load
-        :type paths: list
         :param disabled: list of plugins name to be disabled after loaded
-        :type disabled: list
         """
         # Load plugins declared by setuptools entry points
         self.load_setuptools_entrypoints(hookspecs.hookspec.project_name)
 
-        plugins = []
+        plugins: list[Any] = []
         for path in paths:
             plugin = load_module(path)
             if plugin:
@@ -86,14 +86,13 @@ class PiPluginManager(pluggy.PluginManager):
             for name in disabled:
                 self.unregister(name=name)
 
-    def list_external_plugins(self):
+    def list_external_plugins(self) -> list[Any]:
         """Return the list of loaded plugins except ``pibooth`` core plugins.
         (external plugins can be registered or unregistered)
 
         :return: list of plugins
-        :rtype: list
         """
-        values = []
+        values: list[Any] = []
         for plugin in self._plugin2calls:
             # The core plugins are classes, we don't want to include
             # them here, thus we take only the modules objects.
@@ -101,18 +100,17 @@ class PiPluginManager(pluggy.PluginManager):
                 values.append(plugin)
         return values
 
-    def get_friendly_name(self, plugin, version=True):
+    def get_friendly_name(self, plugin: Any, version: bool = True) -> str:
         """Return the friendly name of the given plugin and
         optionally its version.
 
         :param plugin: registered plugin object
-        :type plugin: object
         :param version: include the version number
-        :type version: bool
         """
         # List of all setuptools registered plugins
         distinfo = dict(self.list_plugin_distinfo())
 
+        name: str | None
         if plugin in distinfo:
             name = distinfo[plugin].project_name
             vnumber = distinfo[plugin].version
@@ -133,18 +131,17 @@ class PiPluginManager(pluggy.PluginManager):
 
         return name
 
-    def get_calls_history(self, plugin):
+    def get_calls_history(self, plugin: Any) -> list[str]:
         """Return the ist of the hook names that has already been called at
         least one time fr the given plugins.
 
         :param plugin: plugin for which calls history is requested
-        :type plugin: object
         """
         if plugin in self._plugin2calls:
             return list(self._plugin2calls[plugin])
         return []
 
-    def subset_hook_caller_for_plugin(self, name, plugin):
+    def subset_hook_caller_for_plugin(self, name: str, plugin: Any) -> Any:
         """Return a new :py:class:`.hooks._HookCaller` instance for the named
         method which manages calls to the given plugins."""
         exluded_plugins = [p for p in self.get_plugins() if self.get_name(p) != self.get_name(plugin)]

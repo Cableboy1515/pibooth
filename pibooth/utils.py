@@ -9,7 +9,10 @@ import platform
 import subprocess
 import sys
 import time
+from collections.abc import Iterator
 from fnmatch import fnmatchcase
+from types import ModuleType
+from typing import Self
 
 import platformdirs
 import psutil
@@ -18,7 +21,7 @@ import pygame
 LOGGER = logging.getLogger("pibooth")
 
 
-def get_config_dir():
+def get_config_dir() -> str:
     """Return the pibooth configuration directory for the current platform.
 
     The historical '~/.config/pibooth' location is kept when it already
@@ -33,13 +36,13 @@ def get_config_dir():
 
 
 class BlockConsoleHandler(logging.StreamHandler):
-    default_level = logging.INFO
+    default_level: int = logging.INFO
     pattern_indent = "+< "
     pattern_blocks = "|  "
     pattern_dedent = "+> "
     current_indent = ""
 
-    def emit(self, record):
+    def emit(self, record: logging.LogRecord) -> None:
         cls = self.__class__
         if cls.is_debug():
             record.msg = f"{cls.current_indent}{record.msg}"
@@ -51,7 +54,7 @@ class BlockConsoleHandler(logging.StreamHandler):
             cls.current_indent = cls.current_indent[: -len(cls.pattern_dedent)]
 
     @classmethod
-    def is_debug(cls):
+    def is_debug(cls) -> bool:
         """Return True if this handler is set to DEBUG level on the root logger."""
         for hdlr in logging.getLogger().handlers:
             if isinstance(hdlr, cls):
@@ -59,13 +62,13 @@ class BlockConsoleHandler(logging.StreamHandler):
         return False
 
     @classmethod
-    def indent(cls):
+    def indent(cls) -> None:
         """Begin a new log block."""
         if cls.is_debug():
             cls.current_indent += cls.pattern_indent
 
     @classmethod
-    def dedent(cls):
+    def dedent(cls) -> None:
         """End the current log block."""
         if cls.is_debug():
             cls.current_indent = cls.current_indent[: -len(cls.pattern_blocks)] + cls.pattern_dedent
@@ -76,30 +79,30 @@ class PoolingTimer:
     Timer to be used in a pooling loop to check if timeout has been exceed.
     """
 
-    def __init__(self, timeout, start=True):
+    def __init__(self, timeout: float, start: bool = True) -> None:
         self.timeout = timeout
-        self.time = None
-        self._paused_total = 0
-        self._paused_time = None
+        self.time: float | None = None
+        self._paused_total = 0.0
+        self._paused_time: float | None = None
         if start:
             self.start()
 
-    def __enter__(self):
+    def __enter__(self) -> Self:
         """Start timer if used as context manager."""
         self.start()
         return self
 
-    def __exit__(self, *args):
+    def __exit__(self, *args: object) -> None:
         """Stop timer if used as context manager."""
         self.time = None
 
-    def reset(self):
+    def reset(self) -> None:
         """Reset timer to its initial state."""
         self.time = None
-        self._paused_total = 0
+        self._paused_total = 0.0
         self._paused_time = None
 
-    def start(self):
+    def start(self) -> None:
         """Start the timer."""
         if self.timeout < 0:
             raise ValueError("PoolingTimer cannot be started if timeout is lower than zero")
@@ -107,15 +110,15 @@ class PoolingTimer:
             self._paused_total += time.time() - self._paused_time
             self._paused_time = None
         else:
-            self._paused_total = 0
+            self._paused_total = 0.0
             self.time = time.time()
 
-    def freeze(self):
+    def freeze(self) -> None:
         """Pause the timer."""
         if not self._paused_time:
             self._paused_time = time.time()
 
-    def remaining(self):
+    def remaining(self) -> float:
         """Return the remaining seconds."""
         if self.time is None:
             remain = float(self.timeout)
@@ -125,26 +128,31 @@ class PoolingTimer:
                 remain = 0.0
         return remain
 
-    def paused(self):
+    def paused(self) -> float:
         """Return the pause duration in seconds."""
         if self._paused_time:
             return self._paused_total + time.time() - self._paused_time
         return self._paused_total
 
-    def elapsed(self):
+    def elapsed(self) -> float:
         """Return the elapsed seconds."""
         if self.time is None:
             return 0.0
         return time.time() - self.time - self.paused()
 
-    def is_timeout(self):
+    def is_timeout(self) -> bool:
         """Return True if the timer is in timeout."""
         if self.time is None:
             raise RuntimeError("PoolingTimer has never been started")
         return (time.time() - self.time - self.paused()) > self.timeout
 
 
-def configure_logging(level=logging.INFO, msgfmt=logging.BASIC_FORMAT, datefmt=None, filename=None):
+def configure_logging(
+    level: int = logging.INFO,
+    msgfmt: str = logging.BASIC_FORMAT,
+    datefmt: str | None = None,
+    filename: str | None = None,
+) -> None:
     """Configure root logger for console printing."""
     root = logging.getLogger()
 
@@ -158,10 +166,10 @@ def configure_logging(level=logging.INFO, msgfmt=logging.BASIC_FORMAT, datefmt=N
             dirname = osp.dirname(filename)
             if not osp.isdir(dirname):
                 os.makedirs(dirname)
-            hdlr = logging.FileHandler(filename, mode="w")
-            hdlr.setFormatter(logging.Formatter(msgfmt, datefmt))
-            hdlr.setLevel(logging.DEBUG)
-            root.addHandler(hdlr)
+            file_hdlr = logging.FileHandler(filename, mode="w")
+            file_hdlr.setFormatter(logging.Formatter(msgfmt, datefmt))
+            file_hdlr.setLevel(logging.DEBUG)
+            root.addHandler(file_hdlr)
 
         # Create a console handler
         hdlr = BlockConsoleHandler(sys.stdout)
@@ -175,11 +183,10 @@ def configure_logging(level=logging.INFO, msgfmt=logging.BASIC_FORMAT, datefmt=N
         logging.getLogger("PIL").setLevel(logging.WARNING)
 
 
-def set_logging_level(level=None):
+def set_logging_level(level: int | None = None) -> None:
     """Set/restore the log level of the concole.
 
     :param level: level as defined in the logging package
-    :type level: int
     """
     for hdlr in logging.getLogger().handlers:
         if isinstance(hdlr, BlockConsoleHandler):
@@ -189,7 +196,7 @@ def set_logging_level(level=None):
             hdlr.setLevel(level)
 
 
-def get_logging_filename():
+def get_logging_filename() -> str | None:
     """Return the absolute path to the logs filename if set."""
     for hdlr in logging.getLogger().handlers:
         if isinstance(hdlr, logging.FileHandler):
@@ -197,7 +204,7 @@ def get_logging_filename():
     return None
 
 
-def get_crash_message():
+def get_crash_message() -> str:
     msg = "system='{}', node='{}', release='{}', version='{}', machine='{}', processor='{}'\n".format(*platform.uname())
     msg += " " + "*" * 83 + "\n"
     msg += " * " + "Oops! It seems that pibooth has crached".center(80) + "*\n"
@@ -209,7 +216,7 @@ def get_crash_message():
 
 
 @contextlib.contextmanager
-def timeit(description):
+def timeit(description: str) -> Iterator[None]:
     """Measure time execution."""
     BlockConsoleHandler.indent()
     LOGGER.info(description)
@@ -221,11 +228,10 @@ def timeit(description):
         LOGGER.debug("took %0.3f seconds", time.time() - start)
 
 
-def pkill(pattern):
+def pkill(pattern: str) -> None:
     """Kill all process matching the given pattern.
 
     :param pattern: pattern used to match processes
-    :type pattern: str
     """
     for proc in psutil.process_iter():
         if fnmatchcase(proc.name(), pattern):
@@ -238,7 +244,7 @@ def pkill(pattern):
                 ) from ex
 
 
-def open_text_editor(filename):
+def open_text_editor(filename: str) -> bool:
     """Open a text editor to edit the configuration file."""
     editors = ["leafpad", "mousepad", "vi", "emacs"]
     for editor in editors:
@@ -254,7 +260,7 @@ def open_text_editor(filename):
     return False
 
 
-def load_module(path):
+def load_module(path: str) -> ModuleType | None:
     """Load a Python module dynamically."""
     if not osp.isfile(path):
         raise ValueError(f"Invalid Python module path '{path}'")
@@ -273,13 +279,14 @@ def load_module(path):
                 return loader.load_module(modname)
         else:
             spec = hook.find_spec(modname, [dirname])
-            if spec:
+            if spec and spec.loader:
                 return spec.loader.load_module(modname)
 
     LOGGER.warning("Can not load Python module '%s' from '%s'", modname, path)
+    return None
 
 
-def get_event_pos(display_size, event):
+def get_event_pos(display_size: tuple[int, int], event: pygame.event.Event) -> tuple[float, float]:
     """
     Return the position from finger or mouse event on x-axis and y-axis (x, y).
 

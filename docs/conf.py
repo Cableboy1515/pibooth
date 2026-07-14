@@ -60,6 +60,10 @@ html_theme_options = {
 # (value 'bysource'). The default is alphabetical.
 autodoc_member_order = 'bysource'
 
+# Render type annotations in the parameter descriptions (the docstrings do not
+# duplicate them in ':type:' fields anymore)
+autodoc_typehints = 'description'
+
 add_module_names = False
 
 # Add any paths that contain custom static files (such as style sheets) here,

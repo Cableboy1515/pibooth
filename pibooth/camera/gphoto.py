@@ -1,5 +1,6 @@
 import io
 import time
+from typing import TYPE_CHECKING, Any
 
 import pygame
 
@@ -14,15 +15,17 @@ from pibooth.language import get_translated_text
 from pibooth.pictures import sizing
 from pibooth.utils import LOGGER, PoolingTimer, pkill
 
+if TYPE_CHECKING:
+    from pibooth.view.window import PiWindow
 
-def get_gp_camera_proxy(port=None):
+
+def get_gp_camera_proxy(port: str | None = None) -> Any:
     """Return camera proxy if a gPhoto2 compatible camera is found
     else return None.
 
     .. note:: try to kill any process using gPhoto2 as it may block camera access.
 
     :param port: look on given port number
-    :type port: str
     """
     if not gp:
         return None  # gPhoto2 is not installed
@@ -56,7 +59,7 @@ def get_gp_camera_proxy(port=None):
     return None
 
 
-def gp_log_callback(level, domain, string, data=None):
+def gp_log_callback(level: int, domain: bytes, string: bytes, data: Any = None) -> None:
     """Logging callback for gphoto2."""
     LOGGER.getChild("gphoto2").debug(domain.decode("utf-8") + ": " + string.decode("utf-8"))
 
@@ -78,13 +81,13 @@ class GpCamera(BaseCamera):
         "sharpen",
     ]
 
-    def __init__(self, camera_proxy):
+    def __init__(self, camera_proxy: Any) -> None:
         super().__init__(camera_proxy)
-        self._gp_logcb = None
+        self._gp_logcb: Any = None
         self._preview_compatible = True
         self._preview_viewfinder = False
 
-    def _specific_initialization(self):
+    def _specific_initialization(self) -> None:
         """Camera initialization."""
         self._gp_logcb = gp.check_result(gp.gp_log_add_func(gp.GP_LOG_VERBOSE, gp_log_callback))
         abilities = self._cam.get_abilities()
@@ -103,28 +106,29 @@ class GpCamera(BaseCamera):
         self.set_config_value("imgsettings", "iso", self.preview_iso)
         self.set_config_value("settings", "capturetarget", "Memory card")
 
-    def _show_overlay(self, text, alpha):
+    def _show_overlay(self, text: str | None, alpha: int) -> None:
         """Add an image as an overlay."""
         if self._window:  # No window means no preview displayed
             rect = self.get_rect()
             self._overlay = self.build_overlay((rect.width, rect.height), str(text), alpha)
 
-    def _rotate_image(self, image, rotation):
+    def _rotate_image(self, image: Image.Image, rotation: int) -> Image.Image:
         """Rotate a PIL image, same direction than RpiCamera."""
         if rotation == 90:
-            return image.transpose(Image.ROTATE_90)
+            return image.transpose(Image.Transpose.ROTATE_90)
         elif rotation == 180:
-            return image.transpose(Image.ROTATE_180)
+            return image.transpose(Image.Transpose.ROTATE_180)
         elif rotation == 270:
-            return image.transpose(Image.ROTATE_270)
+            return image.transpose(Image.Transpose.ROTATE_270)
         return image
 
-    def _get_preview_image(self):
+    def _get_preview_image(self) -> Image.Image:
         """Capture a new preview image."""
         rect = self.get_rect()
+        assert self.resolution is not None
         if self._preview_compatible:
             cam_file = self._cam.capture_preview()
-            image = Image.open(io.BytesIO(cam_file.get_data_and_size()))
+            image: Image.Image = Image.open(io.BytesIO(cam_file.get_data_and_size()))
             image = self._rotate_image(image, self.preview_rotation)
             # Crop to keep aspect ratio of the resolution
             image = image.crop(sizing.new_size_by_croping_ratio(image.size, self.resolution))
@@ -132,7 +136,7 @@ class GpCamera(BaseCamera):
             image = image.resize(sizing.new_size_keep_aspect_ratio(image.size, (rect.width, rect.height), "outer"))
 
             if self.preview_flip:
-                image = image.transpose(Image.FLIP_LEFT_RIGHT)
+                image = image.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
         else:
             image = Image.new("RGB", (rect.width, rect.height), color=(0, 0, 0))
 
@@ -140,18 +144,18 @@ class GpCamera(BaseCamera):
             image.paste(self._overlay, (0, 0), self._overlay)
         return image
 
-    def _post_process_capture(self, capture_data):
+    def _post_process_capture(self, capture_data: tuple[Any, str]) -> Image.Image:
         """Rework capture data.
 
         :param capture_data: couple (GPhotoPath, effect)
-        :type capture_data: tuple
         """
+        assert self.resolution is not None
         gp_path, effect = capture_data
         camera_file = self._cam.file_get(gp_path.folder, gp_path.name, gp.GP_FILE_TYPE_NORMAL)
         if self.delete_internal_memory:
             LOGGER.debug("Delete capture '%s' from internal memory", gp_path.name)
             self._cam.file_delete(gp_path.folder, gp_path.name)
-        image = Image.open(io.BytesIO(camera_file.get_data_and_size()))
+        image: Image.Image = Image.open(io.BytesIO(camera_file.get_data_and_size()))
         image = self._rotate_image(image, self.capture_rotation)
 
         # Crop to keep aspect ratio of the resolution
@@ -160,14 +164,14 @@ class GpCamera(BaseCamera):
         image = image.resize(sizing.new_size_keep_aspect_ratio(image.size, self.resolution, "outer"))
 
         if self.capture_flip:
-            image = image.transpose(Image.FLIP_LEFT_RIGHT)
+            image = image.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
 
         if effect != "none":
             image = image.filter(getattr(ImageFilter, effect.upper()))
 
         return image
 
-    def set_config_value(self, section, option, value):
+    def set_config_value(self, section: str, option: str, value: Any) -> None:
         """Set camera configuration."""
         try:
             LOGGER.debug("Setting option %s/%s=%s", section, option, value)
@@ -196,7 +200,7 @@ class GpCamera(BaseCamera):
         except gp.GPhoto2Error as ex:
             LOGGER.error("Unsupported option %s/%s=%s (%s), configure your DSLR manually", section, option, value, ex)
 
-    def get_config_value(self, section, option):
+    def get_config_value(self, section: str, option: str) -> Any:
         """Get camera configuration option."""
         try:
             config = self._cam.get_config()
@@ -207,7 +211,7 @@ class GpCamera(BaseCamera):
         except gp.GPhoto2Error as ex:
             raise ValueError(f"Unknown option {section}/{option}") from ex
 
-    def preview(self, window, flip=True):
+    def preview(self, window: "PiWindow", flip: bool = True) -> None:
         """Setup the preview."""
         self._window = window
         self.preview_flip = flip
@@ -217,13 +221,15 @@ class GpCamera(BaseCamera):
                 self.set_config_value("actions", "viewfinder", 1)
             self._window.show_image(self._get_preview_image())
 
-    def preview_countdown(self, timeout, alpha=80):
+    def preview_countdown(self, timeout: float, alpha: int = 80) -> None:
         """Show a countdown of `timeout` seconds on the preview.
         Returns when the countdown is finished.
         """
         timeout = int(timeout)
         if timeout < 1:
             raise ValueError("Start time shall be greater than 0")
+        if self._window is None:
+            raise OSError("Preview shall be started first")
 
         shown = False
         first_loop = True
@@ -231,7 +237,7 @@ class GpCamera(BaseCamera):
         while not timer.is_timeout():
             remaining = int(timer.remaining() + 1)
             if not self._overlay or remaining != timeout:
-                # Rebluid overlay only if remaining number has changed
+                # Rebuild overlay only if remaining number has changed
                 self._show_overlay(str(remaining), alpha)
                 timeout = remaining
                 shown = False
@@ -254,11 +260,13 @@ class GpCamera(BaseCamera):
         self._show_overlay(get_translated_text("smile"), alpha)
         self._window.show_image(self._get_preview_image())
 
-    def preview_wait(self, timeout, alpha=80):
+    def preview_wait(self, timeout: float, alpha: int = 80) -> None:
         """Wait the given time."""
         timeout = int(timeout)
         if timeout < 1:
             raise ValueError("Start time shall be greater than 0")
+        if self._window is None:
+            raise OSError("Preview shall be started first")
 
         timer = PoolingTimer(timeout)
         if self._preview_compatible:
@@ -273,12 +281,12 @@ class GpCamera(BaseCamera):
         self._show_overlay(get_translated_text("smile"), alpha)
         self._window.show_image(self._get_preview_image())
 
-    def stop_preview(self):
+    def stop_preview(self) -> None:
         """Stop the preview."""
         self._hide_overlay()
         self._window = None
 
-    def capture(self, effect=None):
+    def capture(self, effect: str | None = None) -> None:
         """Capture a new picture."""
         if self._preview_viewfinder:
             self.set_config_value("actions", "viewfinder", 0)
@@ -298,7 +306,7 @@ class GpCamera(BaseCamera):
 
         self._hide_overlay()  # If stop_preview() has not been called
 
-    def quit(self):
+    def quit(self) -> None:
         """Close the camera driver, it's definitive."""
         if self._cam:
             del self._gp_logcb  # Uninstall log callback

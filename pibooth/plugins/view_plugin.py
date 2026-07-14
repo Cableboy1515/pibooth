@@ -1,5 +1,15 @@
+from typing import TYPE_CHECKING, Any
+
+import pygame
+from PIL import Image
+
 import pibooth
 from pibooth.utils import LOGGER, PoolingTimer, get_crash_message
+
+if TYPE_CHECKING:
+    from pibooth.booth import PiApplication
+    from pibooth.config.parser import PiConfigParser
+    from pibooth.view.window import PiWindow
 
 
 class ViewPlugin:
@@ -7,7 +17,7 @@ class ViewPlugin:
 
     name = "pibooth-core:view"
 
-    def __init__(self, plugin_manager):
+    def __init__(self, plugin_manager: Any) -> None:
         self._pm = plugin_manager
         self.count = 0
         self.forgotten = False
@@ -25,19 +35,21 @@ class ViewPlugin:
         self.finish_timer = PoolingTimer(1)
 
     @pibooth.hookimpl
-    def state_failsafe_enter(self, win):
+    def state_failsafe_enter(self, win: "PiWindow") -> None:
         win.show_oops()
         self.failed_view_timer.start()
         LOGGER.error(get_crash_message())
 
     @pibooth.hookimpl
-    def state_failsafe_validate(self):
+    def state_failsafe_validate(self) -> str | None:
         if self.failed_view_timer.is_timeout():
             return "wait"
+        return None
 
     @pibooth.hookimpl
-    def state_wait_enter(self, cfg, app, win):
+    def state_wait_enter(self, cfg: "PiConfigParser", app: "PiApplication", win: "PiWindow") -> None:
         self.forgotten = False
+        previous_picture: Image.Image | None
         if app.previous_animated:
             previous_picture = next(app.previous_animated)
             # Reset timeout in case of settings changed
@@ -51,7 +63,8 @@ class ViewPlugin:
             win.set_print_number(len(app.printer.get_all_tasks()), not app.printer.is_ready())
 
     @pibooth.hookimpl
-    def state_wait_do(self, app, win, events):
+    def state_wait_do(self, app: "PiApplication", win: "PiWindow", events: list[pygame.event.Event]) -> None:
+        previous_picture: Image.Image | None
         if app.previous_animated and self.animated_frame_timer.is_timeout():
             previous_picture = next(app.previous_animated)
             win.show_intro(previous_picture, app.printer.is_ready() and app.count.remaining_duplicates > 0)
@@ -68,28 +81,31 @@ class ViewPlugin:
             win.show_intro(previous_picture, app.printer.is_ready() and app.count.remaining_duplicates > 0)
 
     @pibooth.hookimpl
-    def state_wait_validate(self, cfg, app, events):
+    def state_wait_validate(
+        self, cfg: "PiConfigParser", app: "PiApplication", events: list[pygame.event.Event]
+    ) -> str | None:
         if app.find_capture_event(events):
             if len(app.capture_choices) > 1:
                 return "choose"
             if cfg.getfloat("WINDOW", "chosen_delay") > 0:
                 return "chosen"
             return "preview"
+        return None
 
     @pibooth.hookimpl
-    def state_wait_exit(self, win):
+    def state_wait_exit(self, win: "PiWindow") -> None:
         self.count = 0
         win.show_image(None)  # Clear currently displayed image
 
     @pibooth.hookimpl
-    def state_choose_enter(self, app, win):
+    def state_choose_enter(self, app: "PiApplication", win: "PiWindow") -> None:
         LOGGER.info("Show picture choice (nothing selected)")
         win.set_print_number(0, False)  # Hide printer status
         win.show_choice(app.capture_choices)
         self.choose_timer.start()
 
     @pibooth.hookimpl
-    def state_choose_validate(self, cfg, app):
+    def state_choose_validate(self, cfg: "PiConfigParser", app: "PiApplication") -> str | None:
         if app.capture_nbr:
             if cfg.getfloat("WINDOW", "chosen_delay") > 0:
                 return "chosen"
@@ -97,9 +113,10 @@ class ViewPlugin:
                 return "preview"
         elif self.choose_timer.is_timeout():
             return "wait"
+        return None
 
     @pibooth.hookimpl
-    def state_chosen_enter(self, cfg, app, win):
+    def state_chosen_enter(self, cfg: "PiConfigParser", app: "PiApplication", win: "PiWindow") -> None:
         LOGGER.info("Show picture choice (%s captures selected)", app.capture_nbr)
         win.show_choice(app.capture_choices, selected=app.capture_nbr)
 
@@ -108,35 +125,39 @@ class ViewPlugin:
         self.layout_timer.start()
 
     @pibooth.hookimpl
-    def state_chosen_validate(self):
+    def state_chosen_validate(self) -> str | None:
         if self.layout_timer.is_timeout():
             return "preview"
+        return None
 
     @pibooth.hookimpl
-    def state_preview_enter(self, app, win):
+    def state_preview_enter(self, app: "PiApplication", win: "PiWindow") -> None:
+        assert app.capture_nbr is not None
         self.count += 1
         win.set_capture_number(self.count, app.capture_nbr)
 
     @pibooth.hookimpl
-    def state_preview_validate(self):
+    def state_preview_validate(self) -> str | None:
         return "capture"
 
     @pibooth.hookimpl
-    def state_capture_do(self, app, win):
+    def state_capture_do(self, app: "PiApplication", win: "PiWindow") -> None:
+        assert app.capture_nbr is not None
         win.set_capture_number(self.count, app.capture_nbr)
 
     @pibooth.hookimpl
-    def state_capture_validate(self, app):
+    def state_capture_validate(self, app: "PiApplication") -> str | None:
+        assert app.capture_nbr is not None
         if self.count >= app.capture_nbr:
             return "processing"
         return "preview"
 
     @pibooth.hookimpl
-    def state_processing_enter(self, win):
+    def state_processing_enter(self, win: "PiWindow") -> None:
         win.show_work_in_progress()
 
     @pibooth.hookimpl
-    def state_processing_validate(self, cfg, app):
+    def state_processing_validate(self, cfg: "PiConfigParser", app: "PiApplication") -> str | None:
         if (
             app.printer.is_ready()
             and cfg.getfloat("PRINTER", "printer_delay") > 0
@@ -146,7 +167,7 @@ class ViewPlugin:
         return "finish"  # Can not print
 
     @pibooth.hookimpl
-    def state_print_enter(self, cfg, app, win):
+    def state_print_enter(self, cfg: "PiConfigParser", app: "PiApplication", win: "PiWindow") -> None:
         LOGGER.info("Display the final picture")
         win.show_print(app.previous_picture)
         win.set_print_number(len(app.printer.get_all_tasks()), not app.printer.is_ready())
@@ -156,16 +177,19 @@ class ViewPlugin:
         self.print_view_timer.start()
 
     @pibooth.hookimpl
-    def state_print_validate(self, app, win, events):
+    def state_print_validate(
+        self, app: "PiApplication", win: "PiWindow", events: list[pygame.event.Event]
+    ) -> str | None:
         printed = app.find_print_event(events)
-        self.forgotten = app.find_capture_event(events)
+        self.forgotten = bool(app.find_capture_event(events))
         if self.print_view_timer.is_timeout() or printed or self.forgotten:
             if printed:
                 win.set_print_number(len(app.printer.get_all_tasks()), not app.printer.is_ready())
             return "finish"
+        return None
 
     @pibooth.hookimpl
-    def state_finish_enter(self, cfg, app, win):
+    def state_finish_enter(self, cfg: "PiConfigParser", app: "PiApplication", win: "PiWindow") -> None:
         if cfg.getfloat("WINDOW", "finish_picture_delay") > 0 and not self.forgotten:
             win.show_finished(app.previous_picture)
             timeout = cfg.getfloat("WINDOW", "finish_picture_delay")
@@ -178,6 +202,7 @@ class ViewPlugin:
         self.finish_timer.start()
 
     @pibooth.hookimpl
-    def state_finish_validate(self):
+    def state_finish_validate(self) -> str | None:
         if self.finish_timer.is_timeout():
             return "wait"
+        return None

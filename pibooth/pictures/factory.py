@@ -1,5 +1,9 @@
+from __future__ import annotations
+
 import os
 import os.path as osp
+from collections.abc import Iterator
+from typing import Any
 
 from PIL import Image, ImageDraw
 from PIL.Image import Resampling
@@ -12,7 +16,7 @@ try:
     import cv2
     import numpy as np
 except ImportError:
-    cv2 = None
+    cv2 = None  # type: ignore[assignment]  # OpenCV is optional
 
 
 class PictureFactory:
@@ -43,34 +47,33 @@ class PictureFactory:
     RIGHT = "right"
     LEFT = "left"
 
-    def __init__(self, width, height, *images):
+    def __init__(self, width: int, height: int, *images: Image.Image) -> None:
         assert len(images) in range(1, 5), "1 to 4 images can be concatenated"
-        self._texts = []
+        self._texts: list[tuple[str, str, Any, str]] = []
         self._texts_height = 0
-        self._final = None
+        self._final: Image.Image | None = None
         self._margin = 100
         self._margin_text = self._margin
         self._crop = False
         self._outlines = False
         self._images = images
-        self._overlay_image = None
-        self._background_color = (255, 255, 255)
-        self._background_image = None
+        self._overlay_image: str | None = None
+        self._background_color: tuple[int, ...] = (255, 255, 255)
+        self._background_image: str | None = None
 
         self.name = self.__class__.__name__
         self.width = width
         self.height = height
         self.is_portrait = self.width < self.height
 
-    def _iter_images(self):
+    def _iter_images(self) -> Iterator[Any]:
         """Yield source images to concatenate."""
         raise NotImplementedError
 
-    def _iter_images_rects(self):
+    def _iter_images_rects(self) -> Iterator[tuple[int, int, int, int]]:
         """Yield top-left coordinates and max size rectangle for each source image.
 
         :return: (image_x, image_y, image_width, image_height)
-        :rtype: tuple
         """
         image_x = self._margin
         image_y = self._margin
@@ -116,14 +119,12 @@ class PictureFactory:
             image_x += image_width + self._margin
             yield image_x, image_y, image_width, image_height
 
-    def _iter_texts_rects(self, interline=None):
+    def _iter_texts_rects(self, interline: int | None = None) -> Iterator[tuple[int, int, int, int]]:
         """Yield top-left coordinates and max size rectangle for each text.
 
         :param interline: margin between each text line
-        :type interline: int
 
         :return: (text_x, text_y, text_width, text_height)
-        :rtype: tuple
         """
         if not interline:
             interline = 20
@@ -154,35 +155,31 @@ class PictureFactory:
                     text_x += interline + text_width
                     yield text_x, text_y + (total_height - text_height) // 2, text_width, text_height
 
-    def _image_resize_keep_ratio(self, image, max_w, max_h, crop=False):
+    def _image_resize_keep_ratio(self, image: Any, max_w: int, max_h: int, crop: bool = False) -> tuple[Any, int, int]:
         """Resize an image to fixed dimensions while keeping its aspect ratio.
         If crop = True, the image will be cropped to fit in the target dimensions.
 
         :return: image object, new width, new height
-        :rtype: tuple
         """
         raise NotImplementedError
 
-    def _image_paste(self, image, dest_image, pos_x, pos_y):
+    def _image_paste(self, image: Any, dest_image: Any, pos_x: int, pos_y: int) -> None:
         """Paste the given image on the destination one."""
         raise NotImplementedError
 
-    def _build_background(self):
+    def _build_background(self) -> Any:
         """Create an image with the given background.
 
         :return: image object which depends on the child class implementation.
-        :rtype: object
         """
         raise NotImplementedError
 
-    def _build_matrix(self, image):
+    def _build_matrix(self, image: Any) -> Any:
         """Draw the images matrix on the given image.
 
         :param image: image object which depends on the child class implementation.
-        :type image: object
 
         :return: image object which depends on the child class implementation.
-        :rtype: object
         """
         offset_generator = self._iter_images_rects()
         count = 1
@@ -205,23 +202,20 @@ class PictureFactory:
             count += 1
         return image
 
-    def _build_final_image(self, image):
+    def _build_final_image(self, image: Any) -> Image.Image:
         """Create the final PIL image and set it to the _final attribute.
 
         :param image: image object which depends on the child class implementation.
-        :type image: object
 
         :return: PIL.Image instance
-        :rtype: object
         """
         raise NotImplementedError
 
-    def _build_texts(self, image):
+    def _build_texts(self, image: Image.Image) -> None:
         """Draw texts on a PIL image (PIL is used instead of OpenCV
         because it is able to draw any fonts without ext).
 
         :param image: PIL.Image instance
-        :type image: object
         """
         offset_generator = self._iter_texts_rects()
         draw = ImageDraw.Draw(image)
@@ -232,9 +226,9 @@ class PictureFactory:
             # Use PIL to draw text because better support for fonts than OpenCV
             font = fonts.get_pil_font(text, font_name, max_width, max_height)
             bbox = font.getbbox(text)
-            text_width = bbox[2] - bbox[0]
-            text_height = bbox[3] - bbox[1]
-            offset_x, offset_y = bbox[0], bbox[1]
+            text_width = int(bbox[2] - bbox[0])
+            text_height = int(bbox[3] - bbox[1])
+            offset_x, offset_y = int(bbox[0]), int(bbox[1])
             if align == self.CENTER:
                 text_x += (max_width - text_width) // 2
             elif align == self.RIGHT:
@@ -247,12 +241,11 @@ class PictureFactory:
                 font=font,
             )
 
-    def _build_outlines(self, image):
+    def _build_outlines(self, image: Image.Image) -> None:
         """Build rectangle around each elements. This method is only for
         debuging purpose.
 
         :param image: PIL.Image instance
-        :type image: object
         """
         draw = ImageDraw.Draw(image)
         for x, y, w, h in self._iter_images_rects():
@@ -261,17 +254,13 @@ class PictureFactory:
             for x, y, w, h in self._iter_texts_rects():
                 draw.rectangle(((x, y), (x + w, y + h)), outline="red")
 
-    def add_text(self, text, font_name, color, align=CENTER):
+    def add_text(self, text: str, font_name: str, color: Any, align: str = CENTER) -> None:
         """Add a new text.
 
         :param text: text to draw
-        :type text: str
         :param font_name: name or path to font file
-        :type font_name: str
         :param color: RGB tuple
-        :type color: tuple
         :param align: text alignment: left, right or center
-        :type align: str
         """
         assert align in [self.CENTER, self.RIGHT, self.LEFT], f"Unknown aligment '{align}'"
         self._texts.append((text, fonts.get_filename(font_name), color, align))
@@ -281,40 +270,36 @@ class PictureFactory:
             self._texts_height = int(self.height // 8)
         self._final = None  # Force rebuild
 
-    def set_background(self, color_or_path):
+    def set_background(self, color_or_path: tuple[int, ...] | list[int] | str) -> None:
         """Set background color (RGB tuple) or path to an image that used to
         fill the background.
 
         :param color_or_path: RGB color tuple or image path
-        :type color_or_path: tuple or str
         """
         if isinstance(color_or_path, (tuple, list)):
             assert len(color_or_path) == 3, "Length of 3 is required for RGB tuple"
-            self._background_color = color_or_path
+            self._background_color = tuple(color_or_path)
         else:
             if not osp.isfile(color_or_path):
                 raise ValueError(f"Invalid background image '{color_or_path}'")
             self._background_image = color_or_path
         self._final = None  # Force rebuild
 
-    def set_overlay(self, image_path):
+    def set_overlay(self, image_path: str) -> None:
         """Set an image that will be paste over the final picture.
 
         :param image_path: image path
-        :type image_path: str
         """
         if not osp.isfile(image_path):
             raise ValueError(f"Invalid background image '{image_path}'")
         self._overlay_image = image_path
         self._final = None  # Force rebuild
 
-    def set_margin(self, margin, margin_text=None):
+    def set_margin(self, margin: int, margin_text: int | None = None) -> None:
         """Set margin between concatenated images.
 
         :param margin: margin in pixels
-        :type margin: int
         :param margin_text: margin between texts in pixels
-        :type margin_text: int
         """
         self._margin = margin
         if margin_text is None:
@@ -323,35 +308,31 @@ class PictureFactory:
             self._margin_text = margin_text
         self._final = None  # Force rebuild
 
-    def set_cropping(self, crop=True):
+    def set_cropping(self, crop: bool = True) -> None:
         """Enable the cropping of source images it order to fit to the final
         size. However some parts of the images will be lost.
 
         :param crop: enable / disable cropping
-        :type crop: bool
         """
         self._crop = crop
         self._final = None  # Force rebuild
 
-    def set_outlines(self, outlines=True):
+    def set_outlines(self, outlines: bool = True) -> None:
         """Draw outlines for each rectangle available for drawing
         images and texts.
 
         :param outlines: enable / disable outlines
-        :type outlines: bool
         """
         self._outlines = outlines
         self._final = None  # Force rebuild
 
-    def build(self, rebuild=False):
+    def build(self, rebuild: bool = False) -> Image.Image:
         """Build the final image or doas nothing if the final image
         has already been built previously.
 
         :param rebuild: force re-build image
-        :type rebuild: bool
 
         :return: PIL.Image instance
-        :rtype: object
         """
         if not self._final or rebuild:
             LOGGER.info("Use %s to create background", self.name)
@@ -372,14 +353,12 @@ class PictureFactory:
 
         return self._final
 
-    def save(self, path):
+    def save(self, path: str) -> Image.Image:
         """Build if not already done and save final image in a file.
 
         :param path: path to save
-        :type path: str
 
         :return: PIL.Image instance
-        :rtype: object
         """
         dirname = osp.dirname(osp.abspath(path))
         if not osp.isdir(dirname):
@@ -391,7 +370,7 @@ class PictureFactory:
 
 
 class PilPictureFactory(PictureFactory):
-    def _image_resize_keep_ratio(self, image, max_w, max_h, crop=False):
+    def _image_resize_keep_ratio(self, image: Any, max_w: int, max_h: int, crop: bool = False) -> tuple[Any, int, int]:
         """See upper class description."""
         if crop:
             width, height = sizing.new_size_keep_aspect_ratio(image.size, (max_w, max_h), "outer")
@@ -402,15 +381,15 @@ class PilPictureFactory(PictureFactory):
             image = image.resize((width, height), Resampling.LANCZOS)
         return image, image.size[0], image.size[1]
 
-    def _image_paste(self, image, dest_image, pos_x, pos_y):
+    def _image_paste(self, image: Any, dest_image: Any, pos_x: int, pos_y: int) -> None:
         """See upper class description."""
         dest_image.paste(image, (pos_x, pos_y))
 
-    def _iter_images(self):
+    def _iter_images(self) -> Iterator[Any]:
         """See upper class description."""
         yield from self._images
 
-    def _build_final_image(self, image):
+    def _build_final_image(self, image: Any) -> Image.Image:
         """See upper class description."""
         if self._overlay_image:
             overlay = Image.open(self._overlay_image).convert("RGBA")
@@ -419,7 +398,7 @@ class PilPictureFactory(PictureFactory):
             image = image.convert("RGB")
         return image
 
-    def _build_background(self):
+    def _build_background(self) -> Any:
         """See upper class description."""
         if self._background_image:
             bg = Image.open(self._background_image)
@@ -430,7 +409,7 @@ class PilPictureFactory(PictureFactory):
 
 
 class OpenCvPictureFactory(PictureFactory):
-    def _image_resize_keep_ratio(self, image, max_w, max_h, crop=False):
+    def _image_resize_keep_ratio(self, image: Any, max_w: int, max_h: int, crop: bool = False) -> tuple[Any, int, int]:
         """See upper class description."""
         inter = cv2.INTER_AREA
         height, width = image.shape[:2]
@@ -455,20 +434,23 @@ class OpenCvPictureFactory(PictureFactory):
             image = cv2.resize(image, (width, height), interpolation=cv2.INTER_AREA)
         return image, image.shape[1], image.shape[0]
 
-    def _image_paste(self, image, dest_image, pos_x, pos_y):
+    def _image_paste(self, image: Any, dest_image: Any, pos_x: int, pos_y: int) -> None:
         """See upper class description."""
         height, width = image.shape[:2]
         dest_image[pos_y : (pos_y + height), pos_x : (pos_x + width)] = image
 
-    def _iter_images(self):
+    def _iter_images(self) -> Iterator[Any]:
         """See upper class description."""
         for image in self._images:
             yield np.array(image.convert("RGB"))
 
-    def _build_final_image(self, image):
+    def _build_final_image(self, image: Any) -> Image.Image:
         """See upper class description."""
         if self._overlay_image:
-            overlay = cv2.cvtColor(cv2.imread(self._overlay_image, cv2.IMREAD_UNCHANGED), cv2.COLOR_BGR2RGBA)
+            data = cv2.imread(self._overlay_image, cv2.IMREAD_UNCHANGED)
+            if data is None:
+                raise ValueError(f"Unable to read overlay image '{self._overlay_image}'")
+            overlay = cv2.cvtColor(data, cv2.COLOR_BGR2RGBA)
             overlay, _, _ = self._image_resize_keep_ratio(overlay, self.width, self.height, True)
 
             x, y = 0, 0
@@ -498,10 +480,13 @@ class OpenCvPictureFactory(PictureFactory):
 
         return Image.fromarray(image)
 
-    def _build_background(self):
+    def _build_background(self) -> Any:
         """See upper class description."""
         if self._background_image:
-            bg = cv2.cvtColor(cv2.imread(self._background_image), cv2.COLOR_BGR2RGB)
+            data = cv2.imread(self._background_image)
+            if data is None:
+                raise ValueError(f"Unable to read background image '{self._background_image}'")
+            bg = cv2.cvtColor(data, cv2.COLOR_BGR2RGB)
             image, _, _ = self._image_resize_keep_ratio(bg, self.width, self.height, True)
         else:
             # Small optimization for all white or all black (or all grey...) background

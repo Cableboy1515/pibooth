@@ -9,7 +9,7 @@ from PIL import ImageFont
 EMBEDDED_FONT_PATH = osp.dirname(osp.abspath(__file__))
 
 
-def get_available_fonts():
+def get_available_fonts() -> list[str]:
     """Return the list of available fonts."""
     fonts_list = []
     for font_file in os.listdir(EMBEDDED_FONT_PATH):
@@ -21,7 +21,7 @@ def get_available_fonts():
     return sorted(fonts_list, key=lambda s: s.lower())
 
 
-def get_filename(name):
+def get_filename(name: str) -> str:
     """Return absolute path to a font definition file located in the current
     package.
     """
@@ -41,7 +41,7 @@ def get_filename(name):
 
     # Show available fonts
     most_similar = None
-    most_similar_ratio = 0
+    most_similar_ratio = 0.0
     for font_name in get_available_fonts():
         sim = SequenceMatcher(None, font_name, name).ratio()  # Similarity
         if sim > most_similar_ratio:
@@ -50,20 +50,15 @@ def get_filename(name):
     raise ValueError(f'System font "{name}" unknown, maybe you mean "{most_similar}"')
 
 
-def get_pil_font(text, font_name, max_width, max_height):
+def get_pil_font(text: str, font_name: str, max_width: float, max_height: float) -> ImageFont.FreeTypeFont:
     """Create the PIL font object which fit the text to the given rectangle.
 
     :param text: text to draw
-    :type text: str
     :param font_name: name or path to font definition file
-    :type font_name: str
     :param max_width: width of the rect to fit
-    :type max_width: int
     :param max_height: height of the rect to fit
-    :type max_height: int
 
     :return: PIL.Font instance
-    :rtype: object
     """
     start, end = 0, int(max_height * 2)
     while start < end:
@@ -78,20 +73,15 @@ def get_pil_font(text, font_name, max_width, max_height):
     return ImageFont.truetype(font_name, start)
 
 
-def get_pygame_font(text, font_name, max_width, max_height):
+def get_pygame_font(text: str, font_name: str, max_width: float, max_height: float) -> pygame.font.Font:
     """Create the pygame font object which fit the text to the given rectangle.
 
     :param text: text to draw
-    :type text: str
     :param font_name: name or path to font definition file
-    :type font_name: str
     :param max_width: width of the rect to fit
-    :type max_width: int
     :param max_height: height of the rect to fit
-    :type max_height: int
 
     :return: pygame.Font instance
-    :rtype: object
     """
     start, end = 0, int(max_height * 2)
     while start < end:

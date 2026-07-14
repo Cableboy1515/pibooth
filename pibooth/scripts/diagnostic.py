@@ -2,6 +2,7 @@
 
 import io
 import sys
+from typing import Any
 
 from PIL import Image
 
@@ -20,11 +21,11 @@ LOGFILE = None
 APPNAME = "diagnostic"
 
 
-def gp_logging(level, domain, string, data=None):
-    write_log(f"Gphoto2: {domain}: {string}")
+def gp_logging(level: int, domain: bytes, string: bytes, data: Any = None) -> None:
+    write_log(f"Gphoto2: {domain.decode('utf-8')}: {string.decode('utf-8')}")
 
 
-def write_log(text, new_section=False):
+def write_log(text: str, new_section: bool = False) -> None:
     """Write text in the log file"""
     global LOGFILE
     if not LOGFILE:
@@ -41,7 +42,7 @@ def write_log(text, new_section=False):
     LOGFILE.write(text + "\n")
 
 
-def print_config(config, parent=""):
+def print_config(config: Any, parent: str = "") -> None:
     """Print all parameters of the camera"""
 
     gp_widget_types = {
@@ -79,7 +80,7 @@ def print_config(config, parent=""):
                 write_log("  Choices     : n/a")
 
 
-def set_config_value(camera, section, option, value):
+def set_config_value(camera: Any, section: str, option: str, value: Any) -> None:
     """Set camera configuration."""
     try:
         write_log(f'Setting option {section}/{option}="{value}"')
@@ -98,7 +99,7 @@ def set_config_value(camera, section, option, value):
         write_log(f"   -> unsupported setting {section}/{option}={value} (nothing configured on DSLR)")
 
 
-def get_config_value(camera, section, option):
+def get_config_value(camera: Any, section: str, option: str) -> Any:
     """Get camera configuration option."""
     try:
         config = camera.get_config()
@@ -110,7 +111,7 @@ def get_config_value(camera, section, option):
         write_log(f"Unknown option {section}/{option}")
 
 
-def camera_connected():
+def camera_connected() -> Any:
     """Return the list of connected camera compatible with gPhoto2."""
     if hasattr(gp, "gp_camera_autodetect"):
         # gPhoto2 version 2.5+
@@ -124,7 +125,7 @@ def camera_connected():
     return cameras
 
 
-def main():
+def main() -> None:
     error = False
     configure_logging()
     write_log(f"Pibooth version installed: {pibooth.__version__}")

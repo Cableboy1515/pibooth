@@ -9,14 +9,18 @@ import os
 import os.path as osp
 import shutil
 import tempfile
+from collections.abc import Iterator
+from typing import Any
 from warnings import filterwarnings
 
 import pygame
 from gpiozero import ButtonBoard, Device, LEDBoard, pi_info
 from gpiozero.exc import BadPinFactory, PinFactoryFallback
+from PIL import Image
 
 import pibooth
 from pibooth import fonts, language
+from pibooth.camera.base import BaseCamera
 from pibooth.config import PiConfigMenu, PiConfigParser
 from pibooth.counters import Counters
 from pibooth.plugins import create_plugin_manager
@@ -75,7 +79,7 @@ class PiApplication:
     :type printer: :py:class:`pibooth.printer.Printer`
     """
 
-    def __init__(self, config, plugin_manager):
+    def __init__(self, config: PiConfigParser, plugin_manager: Any) -> None:
         self._pm = plugin_manager
         self._config = config
 
@@ -100,9 +104,9 @@ class PiApplication:
         else:
             self._window = PiWindow(title, color=init_color, text_color=init_text_color, debug=init_debug)
 
-        self._menu = None
+        self._menu: PiConfigMenu | None = None
         self._multipress_timer = PoolingTimer(config.getfloat("CONTROLS", "multi_press_delay"), False)
-        self._fingerdown_events = []
+        self._fingerdown_events: list[pygame.event.Event] = []
 
         # Define states of the application
         self._machine = StateMachine(self._pm, self._config, self, self._window)
@@ -118,12 +122,12 @@ class PiApplication:
         # ---------------------------------------------------------------------
         # Variables shared with plugins
         # Change them may break plugins compatibility
-        self.capture_nbr = None
-        self.capture_date = None
-        self.capture_choices = (4, 1)
-        self.previous_picture = None
-        self.previous_animated = None
-        self.previous_picture_file = None
+        self.capture_nbr: int | None = None
+        self.capture_date: str | None = None
+        self.capture_choices: tuple[int, ...] = (4, 1)
+        self.previous_picture: Image.Image | None = None
+        self.previous_animated: Iterator[Image.Image] | None = None
+        self.previous_picture_file: str | None = None
 
         self.count = Counters(
             self._config.join_path("counters.json"),
@@ -133,7 +137,7 @@ class PiApplication:
             remaining_duplicates=self._config.getint("PRINTER", "max_duplicates"),
         )
 
-        self.camera = self._pm.hook.pibooth_setup_camera(cfg=self._config)
+        self.camera: BaseCamera = self._pm.hook.pibooth_setup_camera(cfg=self._config)
 
         self.buttons = ButtonBoard(
             capture="BOARD" + config.get("CONTROLS", "picture_btn_pin"),
@@ -157,7 +161,7 @@ class PiApplication:
         )
         # ---------------------------------------------------------------------
 
-    def _initialize(self):
+    def _initialize(self) -> None:
         """Restore the application with initial parameters defined in the
         configuration file.
         Only parameters that can be changed at runtime are restored.
@@ -204,7 +208,7 @@ class PiApplication:
         # Reset the print counter (in case of max_pages is reached)
         self.printer.max_pages = self._config.getint("PRINTER", "max_pages")
 
-    def _on_button_capture_held(self):
+    def _on_button_capture_held(self) -> None:
         """Called when the capture button is pressed."""
         if all(self.buttons.value):
             self.buttons.capture.hold_repeat = True
@@ -235,7 +239,7 @@ class PiApplication:
             self._multipress_timer.reset()
             pygame.event.post(event)
 
-    def _on_button_printer_held(self):
+    def _on_button_printer_held(self) -> None:
         """Called when the printer button is pressed."""
         if all(self.buttons.value):
             # Printer was held while capture was pressed
@@ -253,20 +257,20 @@ class PiApplication:
             pygame.event.post(event)
 
     @property
-    def picture_filename(self):
+    def picture_filename(self) -> str:
         """Return the final picture file name."""
         if not self.capture_date:
             raise OSError("The 'capture_date' attribute is not set yet")
         return f"{self.capture_date}_pibooth.jpg"
 
-    def find_quit_event(self, events):
+    def find_quit_event(self, events: list[pygame.event.Event]) -> pygame.event.Event | None:
         """Return the first found event if found in the list."""
         for event in events:
             if event.type == pygame.QUIT:
                 return event
         return None
 
-    def find_settings_event(self, events):
+    def find_settings_event(self, events: list[pygame.event.Event]) -> pygame.event.Event | None:
         """Return the first found event if found in the list."""
         for event in events:
             if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
@@ -285,21 +289,21 @@ class PiApplication:
                 return pygame.event.Event(BUTTONDOWN, capture=1, printer=1, button=self.buttons)
         return None
 
-    def find_fullscreen_event(self, events):
+    def find_fullscreen_event(self, events: list[pygame.event.Event]) -> pygame.event.Event | None:
         """Return the first found event if found in the list."""
         for event in events:
             if event.type == pygame.KEYDOWN and event.key == pygame.K_f and pygame.key.get_mods() & pygame.KMOD_CTRL:
                 return event
         return None
 
-    def find_resize_event(self, events):
+    def find_resize_event(self, events: list[pygame.event.Event]) -> pygame.event.Event | None:
         """Return the first found event if found in the list."""
         for event in events:
             if event.type == pygame.VIDEORESIZE:
                 return event
         return None
 
-    def find_capture_event(self, events):
+    def find_capture_event(self, events: list[pygame.event.Event]) -> pygame.event.Event | None:
         """Return the first found event if found in the list."""
         for event in events:
             if event.type == pygame.KEYDOWN and event.key == pygame.K_p:
@@ -313,7 +317,7 @@ class PiApplication:
                 return event
         return None
 
-    def find_print_event(self, events):
+    def find_print_event(self, events: list[pygame.event.Event]) -> pygame.event.Event | None:
         """Return the first found event if found in the list."""
         for event in events:
             if event.type == pygame.KEYDOWN and event.key == pygame.K_e and pygame.key.get_mods() & pygame.KMOD_CTRL:
@@ -327,14 +331,14 @@ class PiApplication:
                 return event
         return None
 
-    def find_print_status_event(self, events):
+    def find_print_status_event(self, events: list[pygame.event.Event]) -> pygame.event.Event | None:
         """Return the first found event if found in the list."""
         for event in events:
             if event.type == PRINTER_TASKS_UPDATED:
                 return event
         return None
 
-    def find_choice_event(self, events):
+    def find_choice_event(self, events: list[pygame.event.Event]) -> pygame.event.Event | None:
         """Return the first found event if found in the list."""
         for event in events:
             if event.type == pygame.KEYDOWN and event.key == pygame.K_LEFT:
@@ -357,7 +361,7 @@ class PiApplication:
                 return event
         return None
 
-    def main_loop(self):
+    def main_loop(self) -> None:
         try:
             fps = 40
             clock = pygame.time.Clock()
@@ -405,7 +409,7 @@ class PiApplication:
             pygame.quit()
 
 
-def main():
+def main() -> None:
     """Application entry point."""
     if hasattr(multiprocessing, "set_start_method"):
         # Avoid use 'fork': safely forking a multithreaded process is problematic

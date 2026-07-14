@@ -7,18 +7,20 @@ import os
 import os.path as osp
 import sys
 from collections import OrderedDict as odict
+from collections.abc import Sequence
 from configparser import RawConfigParser
+from typing import Any
 
 from pibooth import language
 from pibooth.utils import LOGGER, open_text_editor
 
 
-def values_list_repr(values):
+def values_list_repr(values: Sequence[Any]) -> str:
     """Concatenate a list of values to a readable string."""
     return "'{}' or '{}'".format("', '".join([str(i) for i in values[:-1]]), values[-1])
 
 
-DEFAULT = odict(
+DEFAULT: "odict[str, odict[str, tuple[Any, str, str | None, Any]]]" = odict(
     (
         (
             "GENERAL",
@@ -387,7 +389,7 @@ class PiConfigParser(RawConfigParser):
     :type filename: str
     """
 
-    def __init__(self, filename, plugin_manager, load=True):
+    def __init__(self, filename: str, plugin_manager: Any, load: bool = True) -> None:
         super().__init__()
         self._pm = plugin_manager
         self.filename = osp.abspath(osp.expanduser(filename))
@@ -395,7 +397,7 @@ class PiConfigParser(RawConfigParser):
         if osp.isfile(self.filename) and load:
             self.load()
 
-    def _get_abs_path(self, path):
+    def _get_abs_path(self, path: str) -> str:
         """Return absolute path. In case of relative path given, the absolute
         one is created using config file path as reference path.
         """
@@ -406,7 +408,7 @@ class PiConfigParser(RawConfigParser):
             path = osp.join(osp.relpath(osp.dirname(self.filename), "."), path)
         return osp.abspath(path)
 
-    def save(self, default=False):
+    def save(self, default: bool = False) -> None:
         """Save the current or default values into the configuration file."""
         LOGGER.info("Generate the configuration file in '%s'", self.filename)
 
@@ -426,18 +428,18 @@ class PiConfigParser(RawConfigParser):
 
         self.handle_autostart()
 
-    def load(self):
+    def load(self) -> None:
         """Load configuration from file."""
         self.read(self.filename, encoding="utf-8")
         self.handle_autostart()
 
-    def edit(self):
+    def edit(self) -> None:
         """Open a text editor to edit the configuration."""
         if open_text_editor(self.filename):
             # Reload config to check if autostart has changed
             self.load()
 
-    def handle_autostart(self):
+    def handle_autostart(self) -> None:
         """Handle desktop file to start pibooth at the Raspberry Pi startup.
 
         Freedesktop autostart entries only exist on Linux, this is a no-op
@@ -475,30 +477,31 @@ class PiConfigParser(RawConfigParser):
             LOGGER.info("Remove the auto-startup file in '%s'", dirname)
             os.remove(filename)
 
-    def join_path(self, *names):
+    def join_path(self, *names: str) -> str:
         """Return the directory path of the configuration file
         and join it the given names.
 
         :param names: names to join to the directory path
-        :type names: str
         """
         return osp.join(osp.dirname(self.filename), *names)
 
-    def add_option(self, section, option, default, description, menu_name=None, menu_choices=None):
+    def add_option(
+        self,
+        section: str,
+        option: str,
+        default: Any,
+        description: str,
+        menu_name: str | None = None,
+        menu_choices: Any = None,
+    ) -> None:
         """Add a new option to the configuration and defines its default value.
 
         :param section: section in which the option is declared
-        :type section: str
         :param option: option name
-        :type option: str
         :param default: default value of the option
-        :type default: any
         :param description: description to put in the configuration
-        :type description: str
         :param menu_name: option label on graphical menu (hidden if None)
-        :type menu_name: str
         :param menu_choices: option possible choices on graphical menu
-        :type menu_choices: any
         """
         assert section, "Section name can not be empty string"
         assert option, "Option name can not be empty string"
@@ -522,44 +525,36 @@ class PiConfigParser(RawConfigParser):
         description = f"{description}\n# Required by '{plugin_name}' plugin"
         DEFAULT.setdefault(section, odict())[option] = (default, description, menu_name, menu_choices)
 
-    def get(self, section, option, **kwargs):
+    def get(self, section: str, option: str, **kwargs: Any) -> str:  # type: ignore[override]
         """Get a value from config. Return the default value if the section
         or option is not defined.
 
         :param section: config section name
-        :type section: str
         :param option: option name
-        :type option: str
 
         :return: value
-        :rtype: str
         """
         if self.has_section(section) and self.has_option(section, option):
             return super().get(section, option, **kwargs)
         return str(DEFAULT[section][option][0])
 
-    def set(self, section, option, value=None):
+    def set(self, section: str, option: str, value: str | None = None) -> None:
         """Set a value to config. Create the section if it is not defined.
 
         :param section: config section name
-        :type section: str
         :param option: option name
-        :type option: str
         :param value: value to set
-        :type value: str
         """
         if not self.has_section(section):
             self.add_section(section)
         super().set(section, option, value)
 
-    def gettyped(self, section, option):
+    def gettyped(self, section: str, option: str) -> Any:
         """Get a value from config and try to convert it in a native Python
         type (using the :py:mod:`ast` module).
 
         :param section: config section name
-        :type section: str
         :param option: option name
-        :type option: str
         """
         value = self.get(section, option)
         try:
@@ -567,19 +562,17 @@ class PiConfigParser(RawConfigParser):
         except (ValueError, SyntaxError):
             return value
 
-    def getpath(self, section, option):
+    def getpath(self, section: str, option: str) -> str:
         """Get a path from config, evaluate the absolute path from configuration
         file path.
 
         :param section: config section name
-        :type section: str
         :param option: option name
-        :type option: str
         """
         return self._get_abs_path(self.get(section, option))
 
     @staticmethod
-    def _get_authorized_types(types):
+    def _get_authorized_types(types: Any) -> tuple[tuple[Any, ...], bool, bool]:
         """Get a tuple of authorized types and if the color and path are accepted"""
         if not isinstance(types, (tuple, list)):
             types = [types]
@@ -603,7 +596,7 @@ class PiConfigParser(RawConfigParser):
 
         return types, color, path
 
-    def gettuple(self, section, option, types, extend=0):
+    def gettuple(self, section: str, option: str, types: Any, extend: int = 0) -> tuple[Any, ...]:
         """Get a list of values from config. The values type shall be in the
         list of authorized types. This method permits to get severals values
         from the same configuration option.
@@ -612,13 +605,9 @@ class PiConfigParser(RawConfigParser):
         with one element is created and returned.
 
         :param section: config section name
-        :type section: str
         :param option: option name
-        :type option: str
         :param types: list of authorized types
-        :type types: list
         :param extend: extend the tuple with the last value until length is reached
-        :type extend: int
         """
         values = self.gettyped(section, option)
         types, color, path = self._get_authorized_types(types)

@@ -1,12 +1,21 @@
 import itertools
 import os
 import os.path as osp
+from collections.abc import Generator
 from datetime import datetime
+from typing import TYPE_CHECKING, Any
+
+import pygame
+from PIL import Image
 
 import pibooth
 from pibooth.pictures import get_picture_factory
 from pibooth.pictures.pool import PicturesFactoryPool
 from pibooth.utils import LOGGER, PoolingTimer
+
+if TYPE_CHECKING:
+    from pibooth.booth import PiApplication
+    from pibooth.config.parser import PiConfigParser
 
 
 class PicturePlugin:
@@ -14,14 +23,14 @@ class PicturePlugin:
 
     name = "pibooth-core:picture"
 
-    def __init__(self, plugin_manager):
+    def __init__(self, plugin_manager: Any) -> None:
         self._pm = plugin_manager
         self.factory_pool = PicturesFactoryPool()
         self.picture_destroy_timer = PoolingTimer(0)
-        self.second_previous_picture = None
-        self.texts_vars = {}
+        self.second_previous_picture: Image.Image | None = None
+        self.texts_vars: dict[str, Any] = {}
 
-    def _reset_vars(self, app):
+    def _reset_vars(self, app: "PiApplication") -> None:
         """Destroy final picture (can not be used anymore)."""
         self.factory_pool.clear()
         app.previous_picture = None
@@ -29,7 +38,9 @@ class PicturePlugin:
         app.previous_picture_file = None
 
     @pibooth.hookimpl(hookwrapper=True)
-    def pibooth_setup_picture_factory(self, cfg, opt_index, factory):
+    def pibooth_setup_picture_factory(
+        self, cfg: "PiConfigParser", opt_index: Any, factory: Any
+    ) -> Generator[None, Any, None]:
 
         outcome = yield  # all corresponding hookimpls are invoked here
         factory = outcome.get_result() or factory
@@ -63,15 +74,15 @@ class PicturePlugin:
         outcome.force_result(factory)
 
     @pibooth.hookimpl
-    def pibooth_cleanup(self):
+    def pibooth_cleanup(self) -> None:
         self.factory_pool.quit()
 
     @pibooth.hookimpl
-    def state_failsafe_enter(self, app):
+    def state_failsafe_enter(self, app: "PiApplication") -> None:
         self._reset_vars(app)
 
     @pibooth.hookimpl
-    def state_wait_enter(self, cfg, app):
+    def state_wait_enter(self, cfg: "PiConfigParser", app: "PiApplication") -> None:
         animated = self.factory_pool.get()
         if cfg.getfloat("WINDOW", "wait_picture_delay") == 0:
             # Do it here to avoid a transient display of the picture
@@ -84,7 +95,7 @@ class PicturePlugin:
         self.picture_destroy_timer.start()
 
     @pibooth.hookimpl
-    def state_wait_do(self, cfg, app):
+    def state_wait_do(self, cfg: "PiConfigParser", app: "PiApplication") -> None:
         if (
             cfg.getfloat("WINDOW", "wait_picture_delay") > 0
             and self.picture_destroy_timer.is_timeout()
@@ -93,12 +104,13 @@ class PicturePlugin:
             self._reset_vars(app)
 
     @pibooth.hookimpl
-    def state_processing_enter(self, app):
+    def state_processing_enter(self, app: "PiApplication") -> None:
         self.second_previous_picture = app.previous_picture
         self._reset_vars(app)
 
     @pibooth.hookimpl
-    def state_processing_do(self, cfg, app):
+    def state_processing_do(self, cfg: "PiConfigParser", app: "PiApplication") -> None:
+        assert app.capture_nbr is not None and app.capture_date is not None
         idx = app.capture_choices.index(app.capture_nbr)
         self.texts_vars["date"] = datetime.strptime(app.capture_date, "%Y-%m-%d-%H-%M-%S")
         self.texts_vars["count"] = app.count
@@ -134,11 +146,11 @@ class PicturePlugin:
                 self.factory_pool.add(factory)
 
     @pibooth.hookimpl
-    def state_processing_exit(self, app):
+    def state_processing_exit(self, app: "PiApplication") -> None:
         app.count.taken += 1  # Do it here because 'print' state can be skipped
 
     @pibooth.hookimpl
-    def state_print_do(self, cfg, app, events):
+    def state_print_do(self, cfg: "PiConfigParser", app: "PiApplication", events: list[pygame.event.Event]) -> None:
         if app.find_capture_event(events):
             LOGGER.info("Moving the picture in the forget folder")
             for savedir in cfg.gettuple("GENERAL", "directory", "path"):

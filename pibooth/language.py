@@ -6,11 +6,18 @@ from configparser import ConfigParser
 
 from pibooth.utils import LOGGER, open_text_editor
 
-PARSER = ConfigParser()
+
+class _TranslationsParser(ConfigParser):
+    """ConfigParser bound to the translations file it was loaded from."""
+
+    filename: str | None = None
+
+
+PARSER = _TranslationsParser()
 
 CURRENT = "en"  # Dynamically set at startup
 
-DEFAULT = {
+DEFAULT: dict[str, dict[str, str]] = {
     "br": {
         "intro": "Tirar foto",
         "intro_print": "Ainda tem como\nimprimir esta\nfoto",
@@ -206,13 +213,11 @@ DEFAULT = {
 }
 
 
-def init(filename, clear=False):
+def init(filename: str, clear: bool = False) -> None:
     """Initialize the translation system.
 
     :param filename: path to the translations file
-    :type filename: str
     :param clear: restore default translations
-    :type clear: bool
     """
     PARSER.filename = osp.abspath(osp.expanduser(filename))
 
@@ -226,10 +231,10 @@ def init(filename, clear=False):
             for section, options in DEFAULT.items():
                 fp.write(f"[{section}]\n")
                 for name, value in options.items():
-                    value = value.splitlines()
-                    fp.write(f"{name} = {value[0]}\n")
-                    if len(value) > 1:
-                        for part in value[1:]:
+                    lines = value.splitlines()
+                    fp.write(f"{name} = {lines[0]}\n")
+                    if len(lines) > 1:
+                        for part in lines[1:]:
                             fp.write(f"    {part}\n")
                 fp.write("\n\n")
 
@@ -254,28 +259,27 @@ def init(filename, clear=False):
             PARSER.write(fp)
 
 
-def edit():
+def edit() -> None:
     """Open a text editor to edit the translations."""
-    if not getattr(PARSER, "filename", None):
+    if not PARSER.filename:
         raise OSError("Translation system is not initialized")
 
     open_text_editor(PARSER.filename)
 
 
-def get_supported_languages():
+def get_supported_languages() -> list[str]:
     """Return the list of supported language."""
-    if getattr(PARSER, "filename", None):
+    if PARSER.filename:
         return sorted(lang for lang in PARSER.sections())
     return sorted(DEFAULT.keys())
 
 
-def get_translated_text(key):
+def get_translated_text(key: str) -> str | None:
     """Return the text corresponding to the key in the language defined in the config.
 
     :param key: key in the translation file
-    :type key: str
     """
-    if not getattr(PARSER, "filename", None):
+    if not PARSER.filename:
         raise OSError("Translation system is not initialized")
 
     if PARSER.has_section(CURRENT) and PARSER.has_option(CURRENT, key):

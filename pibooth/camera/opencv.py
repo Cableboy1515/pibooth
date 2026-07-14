@@ -1,4 +1,7 @@
+from __future__ import annotations
+
 import time
+from typing import TYPE_CHECKING, Any
 
 import pygame
 
@@ -6,7 +9,7 @@ try:
     import cv2
     import numpy as np
 except ImportError:
-    cv2 = None  # OpenCV is optional
+    cv2 = None  # type: ignore[assignment]  # OpenCV is optional
 from PIL import Image
 
 from pibooth.camera.base import BaseCamera
@@ -14,13 +17,15 @@ from pibooth.language import get_translated_text
 from pibooth.pictures import sizing
 from pibooth.utils import LOGGER, PoolingTimer
 
+if TYPE_CHECKING:
+    from pibooth.view.window import PiWindow
 
-def get_cv_camera_proxy(port=None):
+
+def get_cv_camera_proxy(port: int | None = None) -> Any:
     """Return camera proxy if an OpenCV compatible camera is found
     else return None.
 
     :param port: look on given port number
-    :type port: int
     """
     if not cv2:
         return None  # OpenCV is not installed
@@ -57,18 +62,18 @@ class CvCamera(BaseCamera):
         "sharpen",
     ]
 
-    def __init__(self, camera_proxy):
+    def __init__(self, camera_proxy: Any) -> None:
         super().__init__(camera_proxy)
         self._overlay_alpha = 255
-        self._preview_resolution = None
+        self._preview_resolution: tuple[float, float] | None = None
 
-    def _specific_initialization(self):
+    def _specific_initialization(self) -> None:
         """Camera initialization."""
         self._preview_resolution = (self._cam.get(cv2.CAP_PROP_FRAME_WIDTH), self._cam.get(cv2.CAP_PROP_FRAME_HEIGHT))
         LOGGER.debug("Preview resolution is %s", self._preview_resolution)
         self._cam.set(cv2.CAP_PROP_ISO_SPEED, self.preview_iso)
 
-    def _show_overlay(self, text, alpha):
+    def _show_overlay(self, text: str | None, alpha: int) -> None:
         """Add an image as an overlay."""
         if self._window:  # No window means no preview displayed
             rect = self.get_rect()
@@ -77,7 +82,7 @@ class CvCamera(BaseCamera):
             # Remove alpha from overlay
             self._overlay = cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGBA2RGB)
 
-    def _rotate_image(self, image, rotation):
+    def _rotate_image(self, image: np.ndarray, rotation: int) -> np.ndarray:
         """Rotate an OpenCV image, same direction than RpiCamera."""
         if rotation == 90:
             image = cv2.transpose(image)
@@ -89,9 +94,10 @@ class CvCamera(BaseCamera):
             return cv2.flip(image, 0)
         return image
 
-    def _get_preview_image(self):
+    def _get_preview_image(self) -> Image.Image:
         """Capture a new preview image."""
         rect = self.get_rect()
+        assert self.resolution is not None
 
         ret, image = self._cam.read()
         if not ret:
@@ -118,12 +124,12 @@ class CvCamera(BaseCamera):
             image = cv2.addWeighted(image, 1, self._overlay, self._overlay_alpha / 255.0, 0)
         return Image.fromarray(image)
 
-    def _post_process_capture(self, capture_data):
+    def _post_process_capture(self, capture_data: tuple[np.ndarray, str]) -> Image.Image:
         """Rework capture data.
 
         :param capture_data: couple (frame, effect)
-        :type capture_data: tuple
         """
+        assert self.resolution is not None
         frame, effect = capture_data
 
         image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -146,19 +152,21 @@ class CvCamera(BaseCamera):
         image = np.ascontiguousarray(image, dtype=np.uint8)
         return Image.fromarray(image, mode="RGB")
 
-    def preview(self, window, flip=True):
+    def preview(self, window: PiWindow, flip: bool = True) -> None:
         """Setup the preview."""
         self._window = window
         self.preview_flip = flip
         self._window.show_image(self._get_preview_image())
 
-    def preview_countdown(self, timeout, alpha=80):
+    def preview_countdown(self, timeout: float, alpha: int = 80) -> None:
         """Show a countdown of `timeout` seconds on the preview.
         Returns when the countdown is finished.
         """
         timeout = int(timeout)
         if timeout < 1:
             raise ValueError("Start time shall be greater than 0")
+        if self._window is None:
+            raise OSError("Preview shall be started first")
 
         timer = PoolingTimer(timeout)
         while not timer.is_timeout():
@@ -176,11 +184,13 @@ class CvCamera(BaseCamera):
         self._show_overlay(get_translated_text("smile"), alpha)
         self._window.show_image(self._get_preview_image())
 
-    def preview_wait(self, timeout, alpha=80):
+    def preview_wait(self, timeout: float, alpha: int = 80) -> None:
         """Wait the given time."""
         timeout = int(timeout)
         if timeout < 1:
             raise ValueError("Start time shall be greater than 0")
+        if self._window is None:
+            raise OSError("Preview shall be started first")
 
         timer = PoolingTimer(timeout)
         while not timer.is_timeout():
@@ -192,16 +202,18 @@ class CvCamera(BaseCamera):
         self._show_overlay(get_translated_text("smile"), alpha)
         self._window.show_image(self._get_preview_image())
 
-    def stop_preview(self):
+    def stop_preview(self) -> None:
         """Stop the preview."""
         self._hide_overlay()
         self._window = None
 
-    def capture(self, effect=None):
+    def capture(self, effect: str | None = None) -> None:
         """Capture a new picture."""
         effect = str(effect).lower()
         if effect not in self.IMAGE_EFFECTS:
             raise ValueError(f"Invalid capture effect '{effect}' (choose among {self.IMAGE_EFFECTS})")
+        assert self.resolution is not None
+        assert self._preview_resolution is not None
 
         self._cam.set(cv2.CAP_PROP_FRAME_WIDTH, self.resolution[0])
         self._cam.set(cv2.CAP_PROP_FRAME_HEIGHT, self.resolution[1])
@@ -232,7 +244,7 @@ class CvCamera(BaseCamera):
 
         self._hide_overlay()  # If stop_preview() has not been called
 
-    def quit(self):
+    def quit(self) -> None:
         """Close the camera driver, it's definitive."""
         if self._cam:
             self._cam.release()

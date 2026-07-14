@@ -1,12 +1,19 @@
 """Pibooth config menu."""
 
+from collections.abc import Callable, Sequence
+from typing import TYPE_CHECKING, Any
+
 import pygame
 import pygame_menu as pgm
 
 import pibooth
 from pibooth import fonts
-from pibooth.config.parser import DEFAULT
+from pibooth.config.parser import DEFAULT, PiConfigParser
+from pibooth.counters import Counters
 from pibooth.utils import LOGGER, get_event_pos
+
+if TYPE_CHECKING:
+    from pibooth.view.window import PiWindow
 
 pgm.controls.KEY_BACK = pygame.K_ESCAPE
 
@@ -58,7 +65,7 @@ SUBTHEME2_DARK.cursor_color = (255, 255, 255)
 SUBTHEME2_DARK.widget_font_color = (255, 255, 255)
 
 
-def _find(choices, value):
+def _find(choices: Sequence[tuple[Any, ...]], value: Any) -> int:
     """Find index for the given value in choices."""
     for i, val in enumerate(choices):
         if val[0] == value:
@@ -66,7 +73,7 @@ def _find(choices, value):
     return 0
 
 
-def _counters(counters):
+def _counters(counters: Counters) -> list[str]:
     """Return the formatted text for counters."""
     long_name = max(counters.names(), key=len)
     pattern = "{:.<" + str(max(len(long_name) + 2, 25)) + "} {: >4}"
@@ -74,7 +81,14 @@ def _counters(counters):
 
 
 class PiConfigMenu:
-    def __init__(self, plugins_manager, configuration, application, window, onclose=None):
+    def __init__(
+        self,
+        plugins_manager: Any,
+        configuration: PiConfigParser,
+        application: Any,
+        window: "PiWindow",
+        onclose: Callable[[], None] | None = None,
+    ) -> None:
         self.app = application
         self.win = window
         self.cfg = configuration
@@ -104,7 +118,7 @@ class PiConfigMenu:
         self._main_menu.add.button("Exit", self._on_exit)
         self._main_menu.add.vertical_margin(20)
 
-    def _build_keyboard(self):
+    def _build_keyboard(self) -> Any:
         """Build the virtual keyboard if enabled in the configuration and the
         optional 'pygame-vkeyboard' package is installed. Return None otherwise.
         """
@@ -129,7 +143,7 @@ class PiConfigMenu:
         keyboard.disable()
         return keyboard
 
-    def _build_submenu(self, section):
+    def _build_submenu(self, section: str) -> pgm.Menu:
         """Build sub-menu"""
         length = 0
         for option in DEFAULT[section].values():
@@ -196,7 +210,7 @@ class PiConfigMenu:
         menu.add.vertical_margin(20)
         return menu
 
-    def _build_submenu_counters(self, title):
+    def _build_submenu_counters(self, title: str) -> pgm.Menu:
         menu = pgm.Menu(
             title=title.capitalize(), width=self.size[0], height=self.size[1], theme=SUBTHEME2_DARK, touchscreen=True
         )
@@ -207,7 +221,7 @@ class PiConfigMenu:
         menu.add.button("Reset all", self._on_counters_reset, labels)
         return menu
 
-    def _build_submenu_plugins(self, title):
+    def _build_submenu_plugins(self, title: str) -> pgm.Menu:
         menu = pgm.Menu(
             title=title.capitalize(), width=self.size[0], height=self.size[1], theme=SUBTHEME2_DARK, touchscreen=True
         )
@@ -230,48 +244,49 @@ class PiConfigMenu:
             )
         return menu
 
-    def _on_keyboard_event(self, text):
+    def _on_keyboard_event(self, text: str) -> None:
         """Called after each option changed."""
         if self._main_menu.is_enabled():  # Menu may have been closed
             selected = self._main_menu.get_current().get_selected_widget()
             if isinstance(selected, pgm.widgets.TextInput):
                 if isinstance(selected, pgm.widgets.ColorInput):
                     try:
-                        selected.set_value(tuple([int(c) for c in text.split(",")]))
+                        red, green, blue = (int(c) for c in text.split(","))
+                        selected.set_value((red, green, blue))
                     except Exception as ex:
                         LOGGER.error("Invalid color value '%s' (%s)", text, ex)
                 else:
                     selected.set_value(text)
                 selected.change()
 
-    def _on_selector_changed(self, value, **kwargs):
+    def _on_selector_changed(self, value: Any, **kwargs: Any) -> None:
         """Called after each option changed."""
         if self._main_menu.is_enabled():  # Menu may have been closed
             self.cfg.set(kwargs["section"], kwargs["option"], str(value[0][0]))
             self._changed = True
 
-    def _on_text_changed(self, value, **kwargs):
+    def _on_text_changed(self, value: Any, **kwargs: Any) -> None:
         """Called after each text input changed."""
         if self._main_menu.is_enabled():  # Menu may have been closed
             self.cfg.set(kwargs["section"], kwargs["option"], f'"{str(value)}"')
             self._changed = True
 
-    def _on_color_changed(self, value, **kwargs):
+    def _on_color_changed(self, value: Any, **kwargs: Any) -> None:
         """Called after each text input changed."""
         if self._main_menu.is_enabled():  # Menu may have been closed
             self.cfg.set(kwargs["section"], kwargs["option"], str(value))
             self._changed = True
 
-    def _on_counters_reset(self, labels):
+    def _on_counters_reset(self, labels: list[Any]) -> None:
         """Called when the counters are reset."""
         self.app.count.reset()
         for label, text in zip(labels, _counters(self.app.count)):
             label.set_title(text)
 
-    def _on_plugin_toggled(self, activated, **kwargs):
+    def _on_plugin_toggled(self, activated: bool, **kwargs: Any) -> None:
         """Called when a plugin active state is toggled."""
         plugin = kwargs["plugin"]
-        disabled = self.cfg.gettuple(kwargs["section"], kwargs["option"], str)
+        disabled: Any = self.cfg.gettuple(kwargs["section"], kwargs["option"], str)
         if activated and not self.pm.is_registered(plugin):
             self.pm.register(plugin)
             plugin_name = self.pm.get_name(plugin)
@@ -298,7 +313,7 @@ class PiConfigMenu:
             disabled = ""
         self.cfg.set(kwargs["section"], kwargs["option"], str(disabled))
 
-    def _on_close(self):
+    def _on_close(self) -> None:
         """Called when the menu is closed."""
         self._main_menu.disable()
         if self._changed:
@@ -307,22 +322,22 @@ class PiConfigMenu:
         if self._close_callback:
             self._close_callback()
 
-    def _on_exit(self):
+    def _on_exit(self) -> None:
         """Called when the application is exited by menu."""
         self._on_close()
         # Post a QUIT event so that the main loop exits through the regular
         # path and 'pibooth_cleanup' hooks are called
         pygame.event.post(pygame.event.Event(pygame.QUIT))
 
-    def show(self):
+    def show(self) -> None:
         """Show the menu."""
         self._main_menu.enable()
 
-    def is_shown(self):
+    def is_shown(self) -> bool:
         """Return True if the menu is shown."""
         return self._main_menu.is_enabled()
 
-    def create_click_event(self):
+    def create_click_event(self) -> pygame.event.Event:
         """Create a pygame event to click on the currently selected
         widget on the menu. If the widget is a button, ENTER event
         is created, else LEFT event is created.
@@ -343,19 +358,19 @@ class PiConfigMenu:
             )
         return event
 
-    def create_next_event(self):
+    def create_next_event(self) -> pygame.event.Event:
         """Create a pygame event to select the next widget."""
         return pygame.event.Event(
             pygame.KEYDOWN, key=pgm.controls.KEY_MOVE_UP, unicode="\uf701", mod=0, scancode=125, window=None, test=True
         )
 
-    def create_back_event(self):
+    def create_back_event(self) -> pygame.event.Event:
         """Create a pygame event to back to the previous menu."""
         return pygame.event.Event(
             pygame.KEYDOWN, key=pgm.controls.KEY_BACK, unicode="\x1b", mod=0, scancode=53, window=None, test=True
         )
 
-    def process(self, events):
+    def process(self, events: list[pygame.event.Event]) -> None:
         """Process the events related to the menu."""
         if self._keyboard is None or not self._keyboard.is_enabled():
             self._main_menu.update(events)

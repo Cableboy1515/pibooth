@@ -3,6 +3,7 @@
 import json
 import os.path as osp
 import sys
+from typing import Any
 
 import cups
 
@@ -11,28 +12,29 @@ from pibooth.plugins import create_plugin_manager
 from pibooth.utils import LOGGER, configure_logging, get_config_dir
 
 
-def main():
+def main() -> None:
     """Application entry point."""
     configure_logging()
     plugin_manager = create_plugin_manager()
     config = PiConfigParser(osp.join(get_config_dir(), "pibooth.cfg"), plugin_manager)
 
     conn = cups.Connection()
-    name = config.get("PRINTER", "printer_name")
+    config_name = config.get("PRINTER", "printer_name")
+    name: str | None = config_name
 
-    if not name or name.lower() == "default":
+    if not config_name or config_name.lower() == "default":
         name = conn.getDefault()
         if not name and conn.getPrinters():
             name = list(conn.getPrinters().keys())[0]  # Take first one
-    elif name not in conn.getPrinters():
+    elif config_name not in conn.getPrinters():
         name = None
 
     if not name:
-        if name.lower() == "default":
+        if not config_name or config_name.lower() == "default":
             LOGGER.warning("No printer configured in CUPS (see http://localhost:631)")
             return
         else:
-            LOGGER.warning("No printer named '%s' in CUPS (see http://localhost:631)", name)
+            LOGGER.warning("No printer named '%s' in CUPS (see http://localhost:631)", config_name)
             return
     else:
         LOGGER.info("Connected to printer '%s'", name)
@@ -44,7 +46,7 @@ def main():
     for group in groups:
         group_name = f"{group.name} - {group.text}"
         for opt in group.options:
-            option = {"group": group_name}
+            option: dict[str, Any] = {"group": group_name}
             values = [x["choice"] for x in opt.choices]
             texts = [x["text"] for x in opt.choices]
             option["keyword"] = opt.keyword

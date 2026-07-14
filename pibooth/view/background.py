@@ -1,4 +1,6 @@
 import os.path as osp
+from collections.abc import Sequence
+from typing import Any
 
 import pygame
 
@@ -11,7 +13,9 @@ ARROW_HIDDEN = "hidden"
 ARROW_TOUCH = "touchscreen"
 
 
-def multiline_text_to_surfaces(text, color, rect, align="center"):
+def multiline_text_to_surfaces(
+    text: str, color: tuple[int, ...], rect: pygame.Rect, align: str = "center"
+) -> list[tuple[pygame.Surface, pygame.Rect]]:
     """Return a list of surfaces corresponding to each line of the text.
     The surfaces are next to each others in order to fit the given rect.
 
@@ -33,6 +37,8 @@ def multiline_text_to_surfaces(text, color, rect, align="center"):
     for i, line in enumerate(lines):
         surface = font.render(line, True, color)
 
+        x: float
+        y: float
         if align.endswith("left"):
             x = rect.left
         elif align.endswith("center"):
@@ -57,26 +63,28 @@ def multiline_text_to_surfaces(text, color, rect, align="center"):
 
 
 class Background:
-    def __init__(self, image_name, color=(0, 0, 0), text_color=(255, 255, 255)):
-        self._rect = None
+    def __init__(
+        self, image_name: str, color: tuple[int, ...] = (0, 0, 0), text_color: tuple[int, ...] = (255, 255, 255)
+    ) -> None:
+        self._rect = pygame.Rect(0, 0, 0, 0)  # Updated on first resize()
         self._name = image_name
         self._need_update = False
 
-        self._background = None
-        self._background_color = color
-        self._background_image = None
+        self._background: pygame.Surface | None = None
+        self._background_color = tuple(color)
+        self._background_image: str | None = None
 
-        self._overlay = None
+        self._overlay: pygame.Surface | None = None
 
-        self._texts = []  # List of (surface, rect)
+        self._texts: list[tuple[pygame.Surface, pygame.Rect]] = []  # List of (surface, rect)
         self._text_border = 20  # Distance to other elements
-        self._text_color = text_color
+        self._text_color = tuple(text_color)
 
         # Build rectangles around some areas for debuging purpose
         self._show_outlines = True
-        self._outlines = []
+        self._outlines: list[tuple[pygame.Surface, Any]] = []
 
-    def __str__(self):
+    def __str__(self) -> str:
         """Return background final name.
 
         It is used in the main window to distinguish backgrounds in the cache
@@ -84,13 +92,13 @@ class Background:
         """
         return f"{self.__class__.__name__}({self._name})"
 
-    def _make_outlines(self, size):
+    def _make_outlines(self, size: Sequence[float]) -> pygame.Surface:
         """Return a red rectangle surface."""
         outlines = pygame.Surface(size, pygame.SRCALPHA, 32)
         pygame.draw.rect(outlines, pygame.Color(255, 0, 0), outlines.get_rect(), 2)
         return outlines
 
-    def _write_text(self, text, rect=None, align="center"):
+    def _write_text(self, text: str, rect: pygame.Rect | None = None, align: str = "center") -> None:
         """Write a text in the given rectangle."""
         if not rect:
             rect = self._rect.inflate(-self._text_border, -self._text_border)
@@ -98,17 +106,16 @@ class Background:
             self._outlines.append((self._make_outlines(rect.size), rect))
         self._texts.extend(multiline_text_to_surfaces(text, self._text_color, rect, align))
 
-    def set_color(self, color_or_path):
+    def set_color(self, color_or_path: tuple[int, ...] | list[int] | str) -> None:
         """Set background color (RGB tuple) or path to an image that used to
         fill the background.
 
         :param color_or_path: RGB color tuple or image path
-        :type color_or_path: tuple or str
         """
         if isinstance(color_or_path, (tuple, list)):
             assert len(color_or_path) == 3, "Length of 3 is required for RGB tuple"
-            if color_or_path != self._background_color:
-                self._background_color = color_or_path
+            if tuple(color_or_path) != self._background_color:
+                self._background_color = tuple(color_or_path)
                 self._need_update = True
         else:
             assert osp.isfile(color_or_path), f"Invalid image for window background: '{color_or_path}'"
@@ -117,33 +124,31 @@ class Background:
                 self._background_color = (0, 0, 0)
                 self._need_update = True
 
-    def get_color(self):
+    def get_color(self) -> tuple[int, ...]:
         """Return the background color (RGB tuple)."""
         return self._background_color
 
-    def set_text_color(self, color):
+    def set_text_color(self, color: tuple[int, ...] | list[int]) -> None:
         """Set text color (RGB tuple) used to write the texts.
 
         :param color: RGB color tuple
-        :type color: tuple
         """
         assert len(color) == 3, "Length of 3 is required for RGB tuple"
-        if color != self._text_color:
-            self._text_color = color
+        if tuple(color) != self._text_color:
+            self._text_color = tuple(color)
             self._need_update = True
 
-    def set_outlines(self, outlines=True):
+    def set_outlines(self, outlines: bool = True) -> None:
         """Draw outlines for each rectangle available for drawing
         texts.
 
         :param outlines: enable / disable outlines
-        :type outlines: bool
         """
         if outlines != self._show_outlines:
             self._show_outlines = outlines
             self._need_update = True
 
-    def resize(self, screen):
+    def resize(self, screen: pygame.Surface) -> None:
         """Resize objects to fit to the screen."""
         if self._rect != screen.get_rect():
             self._rect = screen.get_rect()
@@ -167,14 +172,14 @@ class Background:
             self.resize_texts()
             self._need_update = True
 
-    def resize_texts(self, rect=None, align="center"):
+    def resize_texts(self, rect: pygame.Rect | None = None, align: str = "center") -> None:
         """Update text surfaces."""
         self._texts = []
         text = get_translated_text(self._name)
         if text:
             self._write_text(text, rect, align)
 
-    def paint(self, screen):
+    def paint(self, screen: pygame.Surface) -> None:
         """Paint and animate the surfaces on the screen."""
         if self._background:
             screen.blit(self._background, (0, 0))
@@ -190,14 +195,14 @@ class Background:
 
 
 class IntroBackground(Background):
-    def __init__(self, arrow_location=ARROW_BOTTOM, arrow_offset=0):
+    def __init__(self, arrow_location: str = ARROW_BOTTOM, arrow_offset: int = 0) -> None:
         Background.__init__(self, "intro")
         self.arrow_location = arrow_location
         self.arrow_offset = arrow_offset
-        self.left_arrow = None
-        self.left_arrow_pos = None
+        self.left_arrow: pygame.Surface | None = None
+        self.left_arrow_pos: tuple[float, float] | None = None
 
-    def resize(self, screen):
+    def resize(self, screen: pygame.Surface) -> None:
         Background.resize(self, screen)
         if self._need_update and self.arrow_location != ARROW_HIDDEN:
             if self.arrow_location == ARROW_TOUCH:
@@ -221,7 +226,7 @@ class IntroBackground(Background):
 
             self.left_arrow_pos = (x - self.arrow_offset, y)
 
-    def resize_texts(self):
+    def resize_texts(self) -> None:  # type: ignore[override]
         """Update text surfaces."""
         if self.arrow_location == ARROW_HIDDEN:
             rect = pygame.Rect(
@@ -257,19 +262,20 @@ class IntroBackground(Background):
             align = "top-center"
         Background.resize_texts(self, rect, align)
 
-    def paint(self, screen):
+    def paint(self, screen: pygame.Surface) -> None:
         Background.paint(self, screen)
         if self.arrow_location != ARROW_HIDDEN:
+            assert self.left_arrow is not None and self.left_arrow_pos is not None
             screen.blit(self.left_arrow, self.left_arrow_pos)
 
 
 class IntroWithPrintBackground(IntroBackground):
-    def __init__(self, arrow_location=ARROW_BOTTOM, arrow_offset=0):
+    def __init__(self, arrow_location: str = ARROW_BOTTOM, arrow_offset: int = 0) -> None:
         IntroBackground.__init__(self, arrow_location, arrow_offset)
-        self.right_arrow = None
-        self.right_arrow_pos = None
+        self.right_arrow: pygame.Surface | None = None
+        self.right_arrow_pos: tuple[float, float] | None = None
 
-    def __str__(self):
+    def __str__(self) -> str:
         """Return background final name.
 
         It is used in the main window to distinguish backgrounds in the cache
@@ -277,7 +283,7 @@ class IntroWithPrintBackground(IntroBackground):
         """
         return "{}({})".format(self.__class__.__name__, "intro_print")
 
-    def resize(self, screen):
+    def resize(self, screen: pygame.Surface) -> None:
         IntroBackground.resize(self, screen)
         if self._need_update and self.arrow_location != ARROW_HIDDEN:
             size = (self._rect.width * 0.1, self._rect.height * 0.1)
@@ -299,7 +305,7 @@ class IntroWithPrintBackground(IntroBackground):
                 y = int(self._rect.bottom - self.right_arrow.get_rect().height * 1.1)
             self.right_arrow_pos = (x - self.arrow_offset, y)
 
-    def resize_texts(self):
+    def resize_texts(self) -> None:  # type: ignore[override]
         """Update text surfaces."""
         IntroBackground.resize_texts(self)
         text = get_translated_text("intro_print")
@@ -311,33 +317,34 @@ class IntroWithPrintBackground(IntroBackground):
                 self._rect.height * 0.3 - 2 * self._text_border,
             )
             if self.arrow_location == ARROW_TOP:
-                rect.top = self._rect.height * 0.08
+                rect.top = int(self._rect.height * 0.08)
             else:
-                rect.bottom = self._rect.height - self._rect.height * 0.08
+                rect.bottom = int(self._rect.height - self._rect.height * 0.08)
             self._write_text(text, rect)
 
-    def paint(self, screen):
+    def paint(self, screen: pygame.Surface) -> None:
         IntroBackground.paint(self, screen)
         if self.arrow_location != ARROW_HIDDEN:
+            assert self.right_arrow is not None and self.right_arrow_pos is not None
             screen.blit(self.right_arrow, self.right_arrow_pos)
 
 
 class ChooseBackground(Background):
-    def __init__(self, choices, arrow_location=ARROW_BOTTOM, arrow_offset=0):
+    def __init__(self, choices: Sequence[int], arrow_location: str = ARROW_BOTTOM, arrow_offset: int = 0) -> None:
         Background.__init__(self, "choose")
         self.arrow_location = arrow_location
         self.arrow_offset = arrow_offset
         self.choices = choices
-        self.layout0 = None
-        self.layout0_pos = None
-        self.layout1 = None
-        self.layout1_pos = None
-        self.left_arrow = None
-        self.left_arrow_pos = None
-        self.right_arrow = None
-        self.right_arrow_pos = None
+        self.layout0: pygame.Surface | None = None
+        self.layout0_pos: tuple[float, float] | None = None
+        self.layout1: pygame.Surface | None = None
+        self.layout1_pos: tuple[float, float] | None = None
+        self.left_arrow: pygame.Surface | None = None
+        self.left_arrow_pos: tuple[float, float] | None = None
+        self.right_arrow: pygame.Surface | None = None
+        self.right_arrow_pos: tuple[float, float] | None = None
 
-    def resize(self, screen):
+    def resize(self, screen: pygame.Surface) -> None:
         Background.resize(self, screen)
         if self._need_update:
             size = (self._rect.width * 0.45, self._rect.height * 0.6)
@@ -381,31 +388,35 @@ class ChooseBackground(Background):
                 self.left_arrow_pos = (x0 - self.arrow_offset, y)
                 self.right_arrow_pos = (x1 + self.arrow_offset, y)
 
-    def resize_texts(self):
+    def resize_texts(self) -> None:  # type: ignore[override]
         """Update text surfaces."""
         rect = pygame.Rect(
             self._text_border, self._text_border, self._rect.width - 2 * self._text_border, self._rect.height * 0.2
         )
         Background.resize_texts(self, rect)
 
-    def paint(self, screen):
+    def paint(self, screen: pygame.Surface) -> None:
         Background.paint(self, screen)
+        assert self.layout0 is not None and self.layout0_pos is not None
+        assert self.layout1 is not None and self.layout1_pos is not None
         screen.blit(self.layout0, self.layout0_pos)
         screen.blit(self.layout1, self.layout1_pos)
         if self.arrow_location in [ARROW_TOP, ARROW_BOTTOM]:
+            assert self.left_arrow is not None and self.left_arrow_pos is not None
+            assert self.right_arrow is not None and self.right_arrow_pos is not None
             screen.blit(self.left_arrow, self.left_arrow_pos)
             screen.blit(self.right_arrow, self.right_arrow_pos)
 
 
 class ChosenBackground(Background):
-    def __init__(self, choices, selected):
+    def __init__(self, choices: Sequence[int], selected: int) -> None:
         Background.__init__(self, "chosen")
         self.choices = choices
         self.selected = selected
-        self.layout = None
-        self.layout_pos = None
+        self.layout: pygame.Surface | None = None
+        self.layout_pos: tuple[float, float] | None = None
 
-    def __str__(self):
+    def __str__(self) -> str:
         """Return background final name.
         It is used in the main window to distinguish background in the cache.
         """
@@ -425,27 +436,28 @@ class ChosenBackground(Background):
 
             self.layout_pos = (x, y)
 
-    def resize_texts(self):
+    def resize_texts(self) -> None:  # type: ignore[override]
         """Update text surfaces."""
         rect = pygame.Rect(
             self._text_border, self._text_border, self._rect.width - 2 * self._text_border, self._rect.height * 0.2
         )
         Background.resize_texts(self, rect)
 
-    def paint(self, screen):
+    def paint(self, screen: pygame.Surface) -> None:
         Background.paint(self, screen)
+        assert self.layout is not None and self.layout_pos is not None
         screen.blit(self.layout, self.layout_pos)
 
 
 class CaptureBackground(Background):
-    def __init__(self):
+    def __init__(self) -> None:
         Background.__init__(self, "capture")
-        self.left_people = None
-        self.left_people_pos = None
-        self.right_people = None
-        self.right_people_pos = None
+        self.left_people: pygame.Surface | None = None
+        self.left_people_pos: tuple[float, float] | None = None
+        self.right_people: pygame.Surface | None = None
+        self.right_people_pos: tuple[float, float] | None = None
 
-    def resize(self, screen):
+    def resize(self, screen: pygame.Surface) -> None:
         Background.resize(self, screen)
         if self._need_update:
             images_height = self._rect.height / 4
@@ -464,17 +476,19 @@ class CaptureBackground(Background):
                 self._outlines.append((self._make_outlines(size), (0, y)))
                 self._outlines.append((self._make_outlines(size), (x, y)))
 
-    def paint(self, screen):
+    def paint(self, screen: pygame.Surface) -> None:
         Background.paint(self, screen)
+        assert self.left_people is not None and self.left_people_pos is not None
+        assert self.right_people is not None and self.right_people_pos is not None
         screen.blit(self.left_people, self.left_people_pos)
         screen.blit(self.right_people, self.right_people_pos)
 
 
 class ProcessingBackground(Background):
-    def __init__(self):
+    def __init__(self) -> None:
         Background.__init__(self, "processing")
 
-    def resize_texts(self):
+    def resize_texts(self) -> None:  # type: ignore[override]
         """Update text surfaces."""
         rect = pygame.Rect(
             self._text_border,
@@ -486,18 +500,19 @@ class ProcessingBackground(Background):
 
 
 class PrintBackground(Background):
-    def __init__(self, arrow_location=ARROW_BOTTOM, arrow_offset=0):
+    def __init__(self, arrow_location: str = ARROW_BOTTOM, arrow_offset: int = 0) -> None:
         Background.__init__(self, "print")
         self.arrow_location = arrow_location
         self.arrow_offset = arrow_offset
-        self.right_arrow = None
-        self.right_arrow_pos = None
-        self.left_arrow = None
-        self.left_arrow_pos = None
+        self.right_arrow: pygame.Surface | None = None
+        self.right_arrow_pos: tuple[float, float] | None = None
+        self.left_arrow: pygame.Surface | None = None
+        self.left_arrow_pos: tuple[float, float] | None = None
 
-    def resize(self, screen):
+    def resize(self, screen: pygame.Surface) -> None:
         Background.resize(self, screen)
         if self._need_update and self.arrow_location != ARROW_HIDDEN:
+            size: tuple[float, float]
             if self.arrow_location == ARROW_TOUCH:
                 size = (self._rect.width // 4, self._rect.height // 4)
                 # Right arrow
@@ -547,7 +562,7 @@ class PrintBackground(Background):
 
             self.left_arrow_pos = (x - self.arrow_offset, y)
 
-    def resize_texts(self):
+    def resize_texts(self) -> None:  # type: ignore[override]
         """Update text surfaces."""
         if self.arrow_location == ARROW_HIDDEN:
             rect = pygame.Rect(
@@ -592,28 +607,30 @@ class PrintBackground(Background):
                 self._rect.height * 0.3 - 2 * self._text_border,
             )
             if self.arrow_location == ARROW_TOP:
-                rect.top = self._rect.height * 0.08
+                rect.top = int(self._rect.height * 0.08)
             else:
-                rect.bottom = self._rect.height - self._rect.height * 0.08
+                rect.bottom = int(self._rect.height - self._rect.height * 0.08)
 
             self._write_text(text, rect)
 
-    def paint(self, screen):
+    def paint(self, screen: pygame.Surface) -> None:
         Background.paint(self, screen)
         if self.arrow_location != ARROW_HIDDEN:
+            assert self.right_arrow is not None and self.right_arrow_pos is not None
+            assert self.left_arrow is not None and self.left_arrow_pos is not None
             screen.blit(self.right_arrow, self.right_arrow_pos)
             screen.blit(self.left_arrow, self.left_arrow_pos)
 
 
 class FinishedBackground(Background):
-    def __init__(self):
+    def __init__(self) -> None:
         Background.__init__(self, "finished")
-        self.left_people = None
-        self.left_people_pos = None
-        self.right_people = None
-        self.right_people_pos = None
+        self.left_people: pygame.Surface | None = None
+        self.left_people_pos: tuple[float, float] | None = None
+        self.right_people: pygame.Surface | None = None
+        self.right_people_pos: tuple[float, float] | None = None
 
-    def resize(self, screen):
+    def resize(self, screen: pygame.Surface) -> None:
         Background.resize(self, screen)
         if self._need_update:
             left_rect = pygame.Rect(10, 0, self._rect.width * 0.4, self._rect.height * 0.5)
@@ -636,28 +653,28 @@ class FinishedBackground(Background):
                 self._outlines.append((self._make_outlines(left_rect.size), left_rect.topleft))
                 self._outlines.append((self._make_outlines(right_rect.size), right_rect.topleft))
 
-    def resize_texts(self):
+    def resize_texts(self) -> None:  # type: ignore[override]
         """Update text surfaces."""
         rect = pygame.Rect(0, 0, self._rect.width * 0.35, self._rect.height * 0.4)
         rect.center = self._rect.center
         rect.bottom = self._rect.bottom - 10
         Background.resize_texts(self, rect)
 
-    def paint(self, screen):
+    def paint(self, screen: pygame.Surface) -> None:
         Background.paint(self, screen)
-        if self.left_people:
+        if self.left_people is not None and self.left_people_pos is not None:
             screen.blit(self.left_people, self.left_people_pos)
-        if self.right_people:
+        if self.right_people is not None and self.right_people_pos is not None:
             screen.blit(self.right_people, self.right_people_pos)
 
 
 class FinishedWithImageBackground(FinishedBackground):
-    def __init__(self, foreground_size):
+    def __init__(self, foreground_size: tuple[int, int]) -> None:
         FinishedBackground.__init__(self)
         self._name = "finishedwithimage"
         self.foreground_size = foreground_size
 
-    def resize(self, screen):
+    def resize(self, screen: pygame.Surface) -> None:
         Background.resize(self, screen)
         if self._need_update:
             # Note: '0.9' ratio comes from PiWindow._update_foreground() method which
@@ -666,7 +683,7 @@ class FinishedWithImageBackground(FinishedBackground):
                 0,
                 0,
                 *pictures.sizing.new_size_keep_aspect_ratio(
-                    self.foreground_size, (self._rect.size[0] * 0.9, self._rect.size[1] * 0.9)
+                    self.foreground_size, (int(self._rect.size[0] * 0.9), int(self._rect.size[1] * 0.9))
                 ),
             )
             xmargin = abs(self._rect.width - frgnd_rect.width) // 2
@@ -702,5 +719,5 @@ class FinishedWithImageBackground(FinishedBackground):
 
 
 class OopsBackground(Background):
-    def __init__(self):
+    def __init__(self) -> None:
         Background.__init__(self, "oops")

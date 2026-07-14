@@ -1,5 +1,13 @@
+from typing import TYPE_CHECKING, Any
+
+import pygame
+
 import pibooth
 from pibooth.utils import LOGGER
+
+if TYPE_CHECKING:
+    from pibooth.booth import PiApplication
+    from pibooth.config.parser import PiConfigParser
 
 
 class PrinterPlugin:
@@ -7,26 +15,27 @@ class PrinterPlugin:
 
     name = "pibooth-core:printer"
 
-    def __init__(self, plugin_manager):
+    def __init__(self, plugin_manager: Any) -> None:
         self._pm = plugin_manager
 
-    def print_picture(self, cfg, app):
+    def print_picture(self, cfg: "PiConfigParser", app: "PiApplication") -> None:
         LOGGER.info("Send final picture to printer")
+        assert app.previous_picture_file is not None
         app.printer.print_file(app.previous_picture_file, cfg.getint("PRINTER", "pictures_per_page"))
         app.count.printed += 1
         app.count.remaining_duplicates -= 1
 
     @pibooth.hookimpl
-    def pibooth_cleanup(self, app):
+    def pibooth_cleanup(self, app: "PiApplication") -> None:
         app.printer.quit()
 
     @pibooth.hookimpl
-    def state_failsafe_enter(self, cfg, app):
+    def state_failsafe_enter(self, cfg: "PiConfigParser", app: "PiApplication") -> None:
         """Reset variables set in this plugin."""
         app.count.remaining_duplicates = cfg.getint("PRINTER", "max_duplicates")
 
     @pibooth.hookimpl
-    def state_wait_do(self, cfg, app, events):
+    def state_wait_do(self, cfg: "PiConfigParser", app: "PiApplication", events: list[pygame.event.Event]) -> None:
         if app.find_print_event(events) and app.previous_picture_file and app.printer.is_installed():
             if app.count.remaining_duplicates <= 0:
                 LOGGER.warning(
@@ -45,11 +54,11 @@ class PrinterPlugin:
             self.print_picture(cfg, app)
 
     @pibooth.hookimpl
-    def state_processing_enter(self, cfg, app):
+    def state_processing_enter(self, cfg: "PiConfigParser", app: "PiApplication") -> None:
         app.count.remaining_duplicates = cfg.getint("PRINTER", "max_duplicates")
 
     @pibooth.hookimpl
-    def state_processing_do(self, cfg, app):
+    def state_processing_do(self, cfg: "PiConfigParser", app: "PiApplication") -> None:
         if app.previous_picture_file and app.printer.is_ready():
             number = cfg.gettyped("PRINTER", "auto_print")
             if number == "max":
@@ -59,6 +68,6 @@ class PrinterPlugin:
                     self.print_picture(cfg, app)
 
     @pibooth.hookimpl
-    def state_print_do(self, cfg, app, events):
+    def state_print_do(self, cfg: "PiConfigParser", app: "PiApplication", events: list[pygame.event.Event]) -> None:
         if app.find_print_event(events) and app.previous_picture_file:
             self.print_picture(cfg, app)

@@ -8,6 +8,10 @@ except ImportError:
 
 import os.path as osp
 import tempfile
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from pibooth.counters import Counters
 
 import pygame
 from PIL import Image
@@ -28,16 +32,24 @@ PAPER_FORMATS = {
 
 
 class Printer:
-    def __init__(self, name="default", max_pages=-1, options=None, counters=None):
+    def __init__(
+        self,
+        name: str = "default",
+        max_pages: int = -1,
+        options: Any = None,
+        counters: "Counters | None" = None,
+    ) -> None:
         self._conn = cups.Connection() if cups else None
         self._notifier = Subscriber(self._conn) if cups else None
-        self.name = None
+        self.name: str | None = None
         self.max_pages = max_pages
-        self.options = options
+        # May come from config as any parsed type, normalized to a dict below
+        self.options: Any = options
         self.count = counters
         if not cups:
             LOGGER.warning("No printer found (pycups or pycups-notify not installed)")
             return  # CUPS is not installed
+        assert self._conn is not None
 
         if not name or name.lower() == "default":
             self.name = self._conn.getDefault()
@@ -60,18 +72,18 @@ class Printer:
         elif not self.options:
             self.options = {}
 
-    def _on_event(self, evt):
+    def _on_event(self, evt: Any) -> None:
         """
         Call for each new printer event.
         """
         LOGGER.info(evt.title)
         pygame.event.post(pygame.event.Event(PRINTER_TASKS_UPDATED, evt=evt))
 
-    def is_installed(self):
+    def is_installed(self) -> bool:
         """Return True if the CUPS server is available for printing."""
         return cups is not None and self.name is not None
 
-    def is_ready(self):
+    def is_ready(self) -> bool:
         """Return False if paper/ink counter is reached or printing is disabled."""
         if not self.is_installed():
             return False
@@ -79,9 +91,9 @@ class Printer:
             return True
         return self.count.printed < self.max_pages
 
-    def print_file(self, filename, copies=1):
+    def print_file(self, filename: str, copies: int = 1) -> None:
         """Send a file to the CUPS server to the default printer."""
-        if not self.name:
+        if not self.name or not self._conn:
             raise OSError("No printer found (check config file or CUPS config)")
         if not osp.isfile(filename):
             raise OSError(f"No such file or directory: {filename}")
@@ -110,21 +122,21 @@ class Printer:
             self._conn.printFile(self.name, filename, osp.basename(filename), self.options)
         LOGGER.debug("File '%s' sent to the printer with options %s", filename, self.options)
 
-    def cancel_all_tasks(self):
+    def cancel_all_tasks(self) -> None:
         """Cancel all tasks in the queue."""
-        if not self.name:
+        if not self.name or not self._conn:
             raise OSError("No printer found (check config file or CUPS config)")
         self._conn.cancelAllJobs(self.name)
 
-    def get_all_tasks(self):
+    def get_all_tasks(self) -> dict[Any, Any]:
         """Return a dict (indexed by job ID) of dicts representing all tasks
         in the queue.
         """
-        if not self.name:
+        if not self.name or not self._conn:
             return {}  # No printer found
         return self._conn.getJobs(my_jobs=True, requested_attributes=["job-id", "job-name", "job-uri", "job-state"])
 
-    def quit(self):
+    def quit(self) -> None:
         """Do cleanup actions."""
         if self._notifier:
             self._notifier.unsubscribe_all()

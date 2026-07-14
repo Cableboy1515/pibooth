@@ -4,6 +4,7 @@ import argparse
 import os
 from datetime import datetime
 from os import path as osp
+from typing import Any
 
 from PIL import Image
 
@@ -14,10 +15,10 @@ from pibooth.plugins import create_plugin_manager
 from pibooth.utils import LOGGER, configure_logging, get_config_dir
 
 
-def get_captures(images_folder):
+def get_captures(images_folder: str) -> list[Image.Image]:
     """Get a list of images from the folder given in input."""
     captures_paths = os.listdir(images_folder)
-    captures = []
+    captures: list[Image.Image] = []
     for capture_path in captures_paths:
         try:
             image = Image.open(osp.join(images_folder, capture_path))
@@ -27,7 +28,7 @@ def get_captures(images_folder):
     return captures
 
 
-def regenerate_all_images(plugin_manager, config, basepath):
+def regenerate_all_images(plugin_manager: Any, config: PiConfigParser, basepath: str) -> None:
     """Regenerate the pibboth images from the raw images and the config."""
     if not osp.isdir(osp.join(basepath, "raw")):
         return
@@ -56,7 +57,7 @@ def regenerate_all_images(plugin_manager, config, basepath):
         factory.save(picture_file)
 
 
-def main():
+def main() -> None:
     """Application entry point."""
     parser = argparse.ArgumentParser(
         usage="%(prog)s [options]",
@@ -92,6 +93,7 @@ def main():
 
     # Initialize varibales normally done by the app
     picture_plugin = plugin_manager.get_plugin("pibooth-core:picture")
+    assert picture_plugin is not None
     picture_plugin.texts_vars["date"] = datetime.now()
     picture_plugin.texts_vars["count"] = Counters(
         config.join_path("counters.json"),

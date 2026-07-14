@@ -1,4 +1,9 @@
-def new_size_keep_aspect_ratio(original_size, target_size, resize_type="inner"):
+from collections.abc import Sequence
+
+
+def new_size_keep_aspect_ratio(
+    original_size: Sequence[int], target_size: Sequence[int], resize_type: str = "inner"
+) -> tuple[int, int]:
     """Return a new size included (if resize_type='inner') or excluded (if resize_type='outer')
     in the targeted one by resizing and keeping the original image's aspect ratio.
     """
@@ -7,6 +12,8 @@ def new_size_keep_aspect_ratio(original_size, target_size, resize_type="inner"):
     ratio = target_size[0] / float(target_size[1])
 
     ox, oy = original_size
+    tx: float
+    ty: float
     tx, ty = target_size
 
     if ratio > img_ratio:
@@ -28,7 +35,9 @@ def new_size_keep_aspect_ratio(original_size, target_size, resize_type="inner"):
     return (int(tx), int(ty))
 
 
-def new_size_by_croping(original_size, target_size, crop_type="center"):
+def new_size_by_croping(
+    original_size: Sequence[int], target_size: Sequence[int], crop_type: str = "center"
+) -> tuple[int, int, int, int]:
     """Return a tuple of top-left and bottom-right points (x1, y1, x2, y2) coresponding
     to a crop of the original size. The position of the rectangle can be defined by the
     crop_type parameter:
@@ -62,7 +71,9 @@ def new_size_by_croping(original_size, target_size, crop_type="center"):
     return (x, y, target_size[0] + x, target_size[1] + y)
 
 
-def new_size_by_croping_ratio(original_size, target_size, crop_type="center"):
+def new_size_by_croping_ratio(
+    original_size: Sequence[int], target_size: Sequence[int], crop_type: str = "center"
+) -> tuple[int, int, int, int]:
     """Return a tuple of top-left and bottom-right points (x1, y1, x2, y2) coresponding
     to a crop of the original size keeping the same aspect ratio of the target size.
 

@@ -1,6 +1,12 @@
 import time
+from typing import TYPE_CHECKING, Any
+
+import pygame
 
 import pibooth
+
+if TYPE_CHECKING:
+    from pibooth.booth import PiApplication
 
 
 class LightsPlugin:
@@ -8,12 +14,12 @@ class LightsPlugin:
 
     name = "pibooth-core:lights"
 
-    def __init__(self, plugin_manager):
+    def __init__(self, plugin_manager: Any) -> None:
         self._pm = plugin_manager
         self.blink_time = 0.3
 
     @pibooth.hookimpl
-    def state_wait_enter(self, app):
+    def state_wait_enter(self, app: "PiApplication") -> None:
         if app.previous_picture_file and app.printer.is_ready() and app.count.remaining_duplicates > 0:
             app.leds.blink(on_time=self.blink_time, off_time=self.blink_time)
         else:
@@ -21,7 +27,7 @@ class LightsPlugin:
             app.leds.printer.off()
 
     @pibooth.hookimpl
-    def state_wait_do(self, app, events):
+    def state_wait_do(self, app: "PiApplication", events: list[pygame.event.Event]) -> None:
         if app.find_print_event(events) and app.previous_picture_file and app.printer.is_ready():
             if app.count.remaining_duplicates <= 0:
                 app.leds.printer.off()
@@ -34,15 +40,15 @@ class LightsPlugin:
             app.leds.printer.off()
 
     @pibooth.hookimpl
-    def state_wait_exit(self, app):
+    def state_wait_exit(self, app: "PiApplication") -> None:
         app.leds.off()
 
     @pibooth.hookimpl
-    def state_choose_enter(self, app):
+    def state_choose_enter(self, app: "PiApplication") -> None:
         app.leds.blink(on_time=self.blink_time, off_time=self.blink_time)
 
     @pibooth.hookimpl
-    def state_choose_exit(self, app):
+    def state_choose_exit(self, app: "PiApplication") -> None:
         if app.capture_nbr == app.capture_choices[0]:
             app.leds.capture.on()
             app.leds.printer.off()
@@ -51,19 +57,19 @@ class LightsPlugin:
             app.leds.capture.off()
 
     @pibooth.hookimpl
-    def state_chosen_exit(self, app):
+    def state_chosen_exit(self, app: "PiApplication") -> None:
         app.leds.off()
 
     @pibooth.hookimpl
-    def state_print_enter(self, app):
+    def state_print_enter(self, app: "PiApplication") -> None:
         app.leds.blink(on_time=self.blink_time, off_time=self.blink_time)
 
     @pibooth.hookimpl
-    def state_print_do(self, app, events):
+    def state_print_do(self, app: "PiApplication", events: list[pygame.event.Event]) -> None:
         if app.find_print_event(events):
             app.leds.printer.on()
             app.leds.capture.off()
 
     @pibooth.hookimpl
-    def state_finish_enter(self, app):
+    def state_finish_enter(self, app: "PiApplication") -> None:
         app.leds.off()

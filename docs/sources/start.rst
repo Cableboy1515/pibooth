@@ -67,6 +67,19 @@ A quick configuration GUI menu (see `Controls`_ ) gives access to the most commo
    :align: center
    :alt: Settings
 
+All options can also be edited from any phone or computer of the local network
+thanks to the web configuration interface. While ``pibooth`` is running, open
+``http://<ip-of-the-booth>:8080`` in a browser (the exact URL is displayed in
+the ``pibooth`` logs at startup). The web interface permits in particular to:
+
+- choose the camera backend and the CUPS printer from a list,
+- upload background/overlay images and assign them without editing paths,
+- see a live preview of the final picture while tuning texts, colors and layout.
+
+Changes are applied to the running booth immediately (except the camera type
+and the web interface options which need a restart). The interface can be
+disabled with the ``web_enabled`` option of the ``[WEB]`` section.
+
 More options are available by editing the configuration file which is easily
 done using the command:
 

@@ -36,6 +36,7 @@ from pibooth.utils import (
     set_logging_level,
 )
 from pibooth.view import PiWindow
+from pibooth.web import CONFIG_CHANGED
 
 # Set the default pin factory to a mock factory if pibooth is not started a Raspberry Pi
 try:
@@ -152,13 +153,17 @@ class PiApplication:
             printer="BOARD" + config.get("CONTROLS", "print_led_pin"),
         )
 
-        self.printer = Printer(
-            config.get("PRINTER", "printer_name"),
-            config.getint("PRINTER", "max_pages"),
-            config.gettyped("PRINTER", "printer_options"),
+        self.printer = self._create_printer()
+        # ---------------------------------------------------------------------
+
+    def _create_printer(self) -> Printer:
+        """Create a printer connection from the current configuration."""
+        return Printer(
+            self._config.get("PRINTER", "printer_name"),
+            self._config.getint("PRINTER", "max_pages"),
+            self._config.gettyped("PRINTER", "printer_options"),
             self.count,
         )
-        # ---------------------------------------------------------------------
 
     def _initialize(self) -> None:
         """Restore the application with initial parameters defined in the
@@ -266,6 +271,13 @@ class PiApplication:
         """Return the first found event if found in the list."""
         for event in events:
             if event.type == pygame.QUIT:
+                return event
+        return None
+
+    def find_config_changed_event(self, events: list[pygame.event.Event]) -> pygame.event.Event | None:
+        """Return the first found event if found in the list."""
+        for event in events:
+            if event.type == CONFIG_CHANGED:
                 return event
         return None
 
@@ -380,6 +392,16 @@ class PiApplication:
                 event = self.find_resize_event(events)
                 if event:
                     self._window.resize(event.size)
+
+                if not self._menu and self.find_config_changed_event(events):
+                    # Configuration changed from the web interface: apply it
+                    # like when the settings menu is closed. The printer is
+                    # recreated as its name/options may have changed.
+                    LOGGER.info("Applying configuration changed from the web interface")
+                    self.printer.quit()
+                    self.printer = self._create_printer()
+                    self._initialize()
+                    self._machine.set_state("wait")
 
                 if not self._menu and self.find_settings_event(events):
                     self.camera.stop_preview()

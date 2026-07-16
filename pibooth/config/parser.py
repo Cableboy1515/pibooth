@@ -60,6 +60,20 @@ DEFAULT: "dict[str, dict[str, tuple[Any, str, str | None, Any]]]" = {
             ["True", "False"],
         ),
     },
+    "WEB": {
+        "web_enabled": (
+            True,
+            "Enable the web configuration interface (reachable from any device on the local network)",
+            "Web settings",
+            ["True", "False"],
+        ),
+        "web_port": (
+            8080,
+            "Port of the web configuration interface",
+            None,
+            None,
+        ),
+    },
     "WINDOW": {
         "size": (
             (800, 480),

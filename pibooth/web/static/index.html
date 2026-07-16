@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>pibooth settings</title>
+  <link rel="stylesheet" href="app.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📸</text></svg>">
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="brand">
+        <span class="brand-icon">📸</span>
+        <div>
+          <div class="brand-name">pibooth</div>
+          <div class="brand-version" id="version"></div>
+        </div>
+      </div>
+      <nav id="nav"></nav>
+      <div class="status" id="status"></div>
+    </aside>
+
+    <main class="content">
+      <header class="content-header">
+        <h1 id="section-title"></h1>
+        <p id="section-hint"></p>
+      </header>
+      <div id="section-body"></div>
+    </main>
+  </div>
+
+  <div class="applybar hidden" id="applybar">
+    <span id="applybar-text"></span>
+    <button class="btn ghost" id="discard-btn">Discard</button>
+    <button class="btn primary" id="apply-btn">Apply changes</button>
+  </div>
+
+  <div class="modal-backdrop hidden" id="asset-modal">
+    <div class="modal">
+      <div class="modal-header">
+        <h2>Choose an image</h2>
+        <button class="btn ghost" id="asset-close">✕</button>
+      </div>
+      <div class="dropzone" id="dropzone">
+        <p>Drag &amp; drop an image here, or</p>
+        <label class="btn primary">
+          Browse…
+          <input type="file" id="asset-file" accept=".png,.jpg,.jpeg,.gif,.bmp,.webp" hidden>
+        </label>
+      </div>
+      <div class="asset-grid" id="asset-grid"></div>
+    </div>
+  </div>
+
+  <div class="toast-region" id="toasts"></div>
+
+  <datalist id="fontlist"></datalist>
+
+  <script src="app.js"></script>
+</body>
+</html>

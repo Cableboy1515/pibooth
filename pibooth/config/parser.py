@@ -53,6 +53,7 @@ DEFAULT: "dict[str, dict[str, tuple[Any, str, str | None, Any]]]" = {
             None,
             None,
         ),
+        "event": ("", "Name of the applied event profile (managed from the web interface)", None, None),
         "vkeyboard": (
             False,
             "Enable a virtual keyboard in the settings interface",

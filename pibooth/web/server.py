@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 import pygame
 from flask import Flask, Response, abort, jsonify, request, send_from_directory
 from PIL import Image, ImageDraw
+from werkzeug.exceptions import HTTPException
 from werkzeug.serving import make_server
 from werkzeug.utils import secure_filename
 
@@ -22,6 +23,7 @@ from pibooth.config.parser import DEFAULT, PiConfigParser
 from pibooth.pictures import get_picture_factory
 from pibooth.utils import LOGGER
 from pibooth.web import CONFIG_CHANGED
+from pibooth.web.events_api import events_api
 
 if TYPE_CHECKING:
     from pibooth.booth import PiApplication
@@ -181,6 +183,21 @@ def create_app(cfg: PiConfigParser, plugin_manager: Any, application: "PiApplica
         with contextlib.suppress(pygame.error):
             pygame.event.post(pygame.event.Event(CONFIG_CHANGED))
 
+    app.config["PIBOOTH"] = {
+        "cfg": cfg,
+        "plugin_manager": plugin_manager,
+        "application": application,
+        "lock": lock,
+        "notify": notify_config_changed,
+    }
+
+    @app.errorhandler(HTTPException)
+    def handle_http_exception(error: HTTPException) -> Response:
+        # The frontend expects the abort() description as JSON, not HTML
+        response = jsonify({"description": error.description})
+        response.status_code = error.code or 500
+        return response
+
     @app.route("/")
     def index() -> Response:
         assert app.static_folder is not None
@@ -326,6 +343,8 @@ def create_app(cfg: PiConfigParser, plugin_manager: Any, application: "PiApplica
         picture.save(buffer, format="PNG")
         buffer.seek(0)
         return Response(buffer.read(), mimetype="image/png")
+
+    app.register_blueprint(events_api)
 
     return app
 

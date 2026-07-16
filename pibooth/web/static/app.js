@@ -151,7 +151,7 @@ async function applyChanges() {
   await loadConfig();
   loadStatus();
   renderNav();
-  renderSection(state.active);
+  renderActive();
   updateApplybar();
   toast("Settings applied — the booth has been updated ✔");
   if (cameraChanged) toast("Camera type changes take effect after restarting pibooth", "warn", 6000);
@@ -161,7 +161,7 @@ async function applyChanges() {
 function discardChanges() {
   state.dirty = {};
   renderNav();
-  renderSection(state.active);
+  renderActive();
   updateApplybar();
 }
 
@@ -528,6 +528,20 @@ async function uploadAsset(file) {
 function renderNav() {
   const nav = $("nav");
   nav.replaceChildren();
+  for (const page of CUSTOM_PAGES) {
+    const item = el(
+      "button",
+      { class: `nav-item${page.id === state.active ? " active" : ""}` },
+      el("span", {}, page.icon),
+      page.label
+    );
+    item.onclick = () => {
+      state.active = page.id;
+      renderNav();
+      page.render();
+    };
+    nav.append(item);
+  }
   for (const section of state.schema.sections) {
     const dirty = state.dirty[section.name] ? Object.keys(state.dirty[section.name]).length : 0;
     const item = el(
@@ -544,6 +558,12 @@ function renderNav() {
     };
     nav.append(item);
   }
+}
+
+function renderActive() {
+  const page = CUSTOM_PAGES.find((p) => p.id === state.active);
+  if (page) page.render();
+  else renderSection(state.active);
 }
 
 function renderSection(name) {
@@ -585,6 +605,13 @@ function renderSection(name) {
   body.append(card);
 }
 
+function activeEventName() {
+  if (!state.schema) return "";
+  const section = state.schema.sections.find((s) => s.name === "GENERAL");
+  const opt = section && section.options.find((o) => o.name === "event");
+  return opt ? opt.value : "";
+}
+
 function renderStatus() {
   const status = $("status");
   status.replaceChildren();
@@ -605,6 +632,10 @@ function renderStatus() {
       printer.connected ? `Printer: ${printer.name}` : "Printer: not connected"
     )
   );
+  const eventName = activeEventName();
+  if (eventName) {
+    status.append(el("div", {}, `🎉 ${eventName}`));
+  }
 }
 
 /* ------------------------------------------------------------------- init */
@@ -667,9 +698,9 @@ async function init() {
     return;
   }
   await Promise.all([loadStatus(), loadFonts(), loadAssets()]);
-  state.active = state.schema.sections[0].name;
+  state.active = CUSTOM_PAGES.length ? CUSTOM_PAGES[0].id : state.schema.sections[0].name;
   renderNav();
-  renderSection(state.active);
+  renderActive();
 }
 
 init();

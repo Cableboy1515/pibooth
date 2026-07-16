@@ -23,6 +23,7 @@ from pibooth.config.parser import DEFAULT, PiConfigParser
 from pibooth.pictures import get_picture_factory
 from pibooth.utils import LOGGER
 from pibooth.web import CONFIG_CHANGED
+from pibooth.web.designer_api import designer_api
 from pibooth.web.events_api import events_api
 
 if TYPE_CHECKING:
@@ -332,9 +333,19 @@ def create_app(cfg: PiConfigParser, plugin_manager: Any, application: "PiApplica
             variant = int(request.args.get("variant", 0))
         except ValueError:
             variant = 0
+        no_overlay = request.args.get("overlay") == "0"
         try:
             with lock:
-                picture = build_preview_picture(cfg, plugin_manager, application, variant)
+                previous_overlay = cfg.get("PICTURE", "overlays")
+                try:
+                    if no_overlay:
+                        # In-memory only: give the designer a plain backdrop
+                        # without persisting the change to disk.
+                        cfg.set("PICTURE", "overlays", "")
+                    picture = build_preview_picture(cfg, plugin_manager, application, variant)
+                finally:
+                    if no_overlay:
+                        cfg.set("PICTURE", "overlays", previous_overlay)
         except Exception as ex:  # Rendering shall never crash the booth
             LOGGER.warning("Cannot build preview picture: %s", ex)
             abort(500, description=f"Cannot build preview picture: {ex}")
@@ -345,6 +356,7 @@ def create_app(cfg: PiConfigParser, plugin_manager: Any, application: "PiApplica
         return Response(buffer.read(), mimetype="image/png")
 
     app.register_blueprint(events_api)
+    app.register_blueprint(designer_api)
 
     return app
 

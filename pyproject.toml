@@ -49,6 +49,7 @@ Documentation = "https://pibooth.readthedocs.io"
 
 [project.optional-dependencies]
 dslr = ["gphoto2>=2.0.0 ; sys_platform!='win32'"]
+gphotos = ["google-auth>=2.0", "google-auth-oauthlib>=1.0"]
 printer = [
     "pycups>=1.9.73 ; sys_platform!='win32'",
     "pycups-notify>=0.0.4 ; sys_platform!='win32'",
@@ -69,6 +70,7 @@ pibooth-diag = "pibooth.scripts.diagnostic:main"
 pibooth-fonts = "pibooth.scripts.fonts:main"
 pibooth-regen = "pibooth.scripts.regenerate:main"
 pibooth-printcfg = "pibooth.scripts.printer:main"
+pibooth-google-auth = "pibooth.scripts.google_auth:main"
 
 [tool.setuptools]
 zip-safe = false
@@ -138,5 +140,7 @@ module = [
     "pygame_menu.*",
     "pygame_vkeyboard.*",
     "RPi.*",
+    "google.*",
+    "google_auth_oauthlib.*",
 ]
 ignore_missing_imports = true

@@ -19,6 +19,7 @@ const SECTION_ICONS = {
   PICTURE: "🖼️",
   CAMERA: "📷",
   PRINTER: "🖨️",
+  UPLOAD: "📤",
   CONTROLS: "🎛️",
 };
 
@@ -29,6 +30,7 @@ const SECTION_HINTS = {
   PICTURE: "Layout and look of the final picture — check the preview below.",
   CAMERA: "Camera backend and capture settings.",
   PRINTER: "Printing through CUPS.",
+  UPLOAD: "Where the final picture is uploaded after each session — see the Uploads page for queue status.",
   CONTROLS: "Hardware buttons and LEDs wiring (GPIO).",
 };
 

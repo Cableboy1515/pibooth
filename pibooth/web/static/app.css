@@ -465,6 +465,29 @@ input[type="color"] {
 .toast.warn { background: #b9770e; }
 @keyframes toast-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 
+/* --------------------------------------------------------------- uploads */
+.upload-table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+.upload-table th, .upload-table td {
+  text-align: left;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+.upload-table th { color: var(--muted); font-weight: 600; font-size: 12px; }
+.upload-table td.upload-error { color: var(--danger); font-size: 12px; max-width: 260px; word-break: break-word; }
+
+.status-badge {
+  display: inline-block;
+  padding: 2px 9px;
+  border-radius: 9px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #fff;
+}
+.status-badge.pending { background: #e08a1e; }
+.status-badge.done { background: #2ecc71; }
+.status-badge.failed { background: var(--danger); }
+
 /* ---------------------------------------------------------------- mobile */
 @media (max-width: 760px) {
   .layout { flex-direction: column; }

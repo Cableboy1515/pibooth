@@ -248,6 +248,35 @@ DEFAULT: "dict[str, dict[str, tuple[Any, str, str | None, Any]]]" = {
             [str(i) for i in range(1, 5)],
         ),
     },
+    "UPLOAD": {
+        "upload_backend": (
+            "none",
+            "Photo upload service: 'none', 'folder', 'webdav' or 'gphotos'",
+            "Upload service",
+            ["none", "folder", "webdav", "gphotos"],
+        ),
+        "upload_album": ("Pibooth", "Album/folder name used by the upload service", None, None),
+        "upload_originals": (
+            False,
+            "Also upload the individual raw captures (not only the final picture)",
+            None,
+            None,
+        ),
+        "upload_folder_path": ("", "Target directory of the 'folder' upload service", None, None),
+        "upload_webdav_url": (
+            "",
+            "WebDAV base URL of the 'webdav' upload service (e.g. Nextcloud remote.php/dav/files/USER/pibooth/)",
+            None,
+            None,
+        ),
+        "upload_webdav_user": ("", "WebDAV username", None, None),
+        "upload_webdav_password": (
+            "",
+            "WebDAV password (stored in clear text, use a dedicated app password!)",
+            None,
+            None,
+        ),
+    },
     "CONTROLS": {
         "debounce_delay": (0.3, "How long to press a single hardware button in seconds", None, None),
         "multi_press_delay": (0.5, "How long to press multiple hardware buttons in seconds", None, None),

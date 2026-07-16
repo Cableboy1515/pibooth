@@ -172,6 +172,12 @@ DEFAULT: "dict[str, dict[str, tuple[Any, str, str | None, Any]]]" = {
         ),
     },
     "CAMERA": {
+        "type": (
+            "auto",
+            "Camera backend: 'auto' (detect best one), 'picamera', 'gphoto2', 'opencv', 'gphoto2+picamera' or 'gphoto2+opencv'",
+            "Camera type",
+            ["auto", "picamera", "gphoto2", "opencv", "gphoto2+picamera", "gphoto2+opencv"],
+        ),
         "iso": (
             100,
             "Adjust ISO for lighting issues, can be different for preview and capture (list of integers accepted)",

@@ -17,8 +17,8 @@ const designerState = {
   imageCache: new Map(), // asset basename -> HTMLImageElement
   sampleImage: null, // HTMLImageElement of the backdrop preview
   designs: [], // /api/designs payload cache
-  dragging: false,
-  dragOffset: { x: 0, y: 0 },
+  geometry: { width: 800, height: 1200, orientation: "portrait", source: "default" },
+  editor: null, // active CanvasEditor instance
 };
 
 const DESIGNER_CANVAS_HEIGHT = 520;
@@ -26,10 +26,28 @@ const DESIGNER_CANVAS_HEIGHT = 520;
 /* ------------------------------------------------------------- geometry */
 
 function designerCanvasSize() {
-  const ratio = designerState.orientation === "landscape" ? 3 / 2 : 2 / 3;
+  const ratio = designerState.geometry.width / designerState.geometry.height;
   const height = DESIGNER_CANVAS_HEIGHT;
   const width = Math.round(height * ratio);
   return { width, height };
+}
+
+async function fetchDesignerGeometry() {
+  try {
+    designerState.geometry = await api("/api/geometry?variant=0");
+  } catch (error) {
+    designerState.geometry = { width: 800, height: 1200, orientation: "portrait", source: "default" };
+  }
+  const canvas = $("designer-canvas");
+  if (canvas) {
+    resizeCanvas(canvas);
+    redraw();
+  }
+  const caption = $("designer-geometry-caption");
+  if (caption) {
+    const g = designerState.geometry;
+    caption.textContent = `Layout: ${g.width}x${g.height}px (${g.source})`;
+  }
 }
 
 function elementLabel(element) {
@@ -85,6 +103,10 @@ function ensureFontLoaded(name) {
   }
 }
 
+/** Compute an element's on-canvas bounding box, in PIXELS of `canvasSize`
+ * (center + half-extents + rotation). Shared by drawing, the CanvasEditor
+ * adapter and hit-testing used to happen here before CanvasEditor took over.
+ */
 function elementBounds(ctx, element, canvasSize) {
   const cx = element.x * canvasSize.width;
   const cy = element.y * canvasSize.height;
@@ -155,34 +177,23 @@ function drawElement(ctx, element, canvasSize) {
   ctx.restore();
 }
 
-function redraw() {
-  const canvas = $("designer-canvas");
-  if (!canvas) return;
-  const ctx = canvas.getContext("2d");
+/** CanvasEditor draw() callback: paint the sample backdrop then every element,
+ * in canvas-logical pixel space (the editor has already applied the zoom/pan
+ * transform and cleared the canvas by the time this runs).
+ */
+function drawScene(ctx) {
   const size = designerCanvasSize();
-  ctx.clearRect(0, 0, size.width, size.height);
-
   if (designerState.showSample && designerState.sampleImage && designerState.sampleImage.complete) {
     ctx.save();
     ctx.globalAlpha = 0.6;
     ctx.drawImage(designerState.sampleImage, 0, 0, size.width, size.height);
     ctx.restore();
   }
-
   designerState.elements.forEach((element) => drawElement(ctx, element, size));
+}
 
-  if (designerState.selected >= 0 && designerState.elements[designerState.selected]) {
-    const element = designerState.elements[designerState.selected];
-    const bounds = elementBounds(ctx, element, size);
-    ctx.save();
-    ctx.translate(bounds.cx, bounds.cy);
-    ctx.rotate(((bounds.rotation || 0) * Math.PI) / 180);
-    ctx.setLineDash([6, 4]);
-    ctx.strokeStyle = "#239587";
-    ctx.lineWidth = 1.5;
-    ctx.strokeRect(-bounds.width / 2 - 4, -bounds.height / 2 - 4, bounds.width + 8, bounds.height + 8);
-    ctx.restore();
-  }
+function redraw() {
+  if (designerState.editor) designerState.editor.requestDraw();
 }
 
 function loadSampleBackdrop() {
@@ -197,33 +208,65 @@ function loadSampleBackdrop() {
   image.src = `/api/preview?variant=0&overlay=0&_=${Date.now()}`;
 }
 
-/* --------------------------------------------------------- hit-testing */
+/* ------------------------------------------------------ CanvasEditor adapter */
 
-function hitTest(px, py, canvasSize) {
+/** Text/image elements are center-based; frames have no canvas position and
+ * are not selectable on the canvas (list-selected only).
+ */
+function elementItemRect(element) {
+  if (element.type === "frame") return null;
+  const size = designerCanvasSize();
   const ctx = $("designer-canvas").getContext("2d");
-  for (let i = designerState.elements.length - 1; i >= 0; i--) {
-    const element = designerState.elements[i];
-    const bounds = elementBounds(ctx, element, canvasSize);
-    // Translate point into the element's unrotated local space
-    const angle = (-(bounds.rotation || 0) * Math.PI) / 180;
-    const dx = px - bounds.cx;
-    const dy = py - bounds.cy;
-    const localX = dx * Math.cos(angle) - dy * Math.sin(angle);
-    const localY = dx * Math.sin(angle) + dy * Math.cos(angle);
-    if (Math.abs(localX) <= bounds.width / 2 && Math.abs(localY) <= bounds.height / 2) {
-      return i;
-    }
+  const bounds = elementBounds(ctx, element, size);
+  return {
+    x: bounds.cx / size.width,
+    y: bounds.cy / size.height,
+    w: bounds.width / size.width,
+    h: bounds.height / size.height,
+    rotation: bounds.rotation,
+    centerBased: true,
+  };
+}
+
+/** Text has no independently stored width (it is measured from the font
+ * size), so a resize drag scales `size` by however much the drag changed
+ * the measured height. Images store `width` directly.
+ */
+function setElementItemRect(element, rect) {
+  const size = designerCanvasSize();
+  if (element.type === "text") {
+    const ctx = $("designer-canvas").getContext("2d");
+    const before = elementBounds(ctx, element, size);
+    const oldHeightFraction = before.height / size.height;
+    const scale = oldHeightFraction > 0 ? rect.h / oldHeightFraction : 1;
+    element.size = Math.max(0.005, element.size * scale);
+  } else if (element.type === "image") {
+    element.width = Math.max(0.01, rect.w);
   }
-  return -1;
+  element.x = rect.x;
+  element.y = rect.y;
+  element.rotation = rect.rotation;
+  renderElementList();
 }
 
 /* ------------------------------------------------------------- controls */
 
 function selectElement(index) {
-  designerState.selected = index;
+  const item = index >= 0 ? designerState.elements[index] : null;
+  if (designerState.editor) {
+    designerState.editor.select(item);
+  } else {
+    onCanvasSelect(item);
+  }
+}
+
+/** Called by the CanvasEditor whenever selection changes (canvas click or
+ * a programmatic editor.select() from the element list).
+ */
+function onCanvasSelect(item) {
+  designerState.selected = item ? designerState.elements.indexOf(item) : -1;
   renderElementList();
   renderPropertiesPanel();
-  redraw();
 }
 
 function moveElement(index, delta) {
@@ -240,19 +283,21 @@ function moveElement(index, delta) {
 function duplicateElement(index) {
   const clone = { ...designerState.elements[index] };
   designerState.elements.splice(index + 1, 0, clone);
-  designerState.selected = index + 1;
-  renderElementList();
-  renderPropertiesPanel();
-  redraw();
+  selectElement(index + 1);
 }
 
 function deleteElement(index) {
+  const removed = designerState.elements[index];
   designerState.elements.splice(index, 1);
   if (designerState.selected === index) designerState.selected = -1;
   else if (designerState.selected > index) designerState.selected -= 1;
-  renderElementList();
-  renderPropertiesPanel();
-  redraw();
+  if (designerState.editor && designerState.editor.getSelected() === removed) {
+    designerState.editor.select(null);
+  } else {
+    renderElementList();
+    renderPropertiesPanel();
+    redraw();
+  }
 }
 
 function renderElementList() {
@@ -309,6 +354,40 @@ function rangeField(labelText, value, min, max, step, onInput) {
   return field(labelText, el("div", { class: "row" }, input, readout));
 }
 
+/** A compact numeric input (used for the X/Y/size/rotation percent fields);
+ * edits mutate the element live and redraw the canvas.
+ */
+function numberField(labelText, value, step, onInput) {
+  const input = el("input", { type: "number", step: String(step) });
+  input.value = String(Math.round(value * 100) / 100);
+  input.oninput = () => {
+    const parsed = parseFloat(input.value);
+    if (!Number.isNaN(parsed)) onInput(parsed);
+  };
+  return field(labelText, input);
+}
+
+/** X %, Y %, rotation ° numeric fields plus Center H/V buttons, shared by
+ * the text and image property panels. `update` is the panel's local patch
+ * helper (mutates the element, refreshes the list and redraws).
+ */
+function positionFields(element, update) {
+  const centerH = el("button", { class: "btn small" }, "Center H");
+  centerH.onclick = () => update({ x: 0.5 });
+  const centerV = el("button", { class: "btn small" }, "Center V");
+  centerV.onclick = () => update({ y: 0.5 });
+  return [
+    el(
+      "div",
+      { class: "designer-numeric-grid" },
+      numberField("X %", element.x * 100, 0.1, (v) => update({ x: v / 100 })),
+      numberField("Y %", element.y * 100, 0.1, (v) => update({ y: v / 100 })),
+      numberField("Rotation °", element.rotation || 0, 1, (v) => update({ rotation: v }))
+    ),
+    el("div", { class: "row" }, centerH, centerV),
+  ];
+}
+
 function renderPropertiesPanel() {
   const panel = $("designer-properties");
   if (!panel) return;
@@ -354,8 +433,10 @@ function renderPropertiesPanel() {
       field("Font", fontSelect),
       field("Color", colorInput),
       rangeField("Size", element.size, 0.01, 0.3, 0.005, (value) => update({ size: value })),
+      numberField("Size %", element.size * 100, 0.1, (v) => update({ size: v / 100 })),
       rangeField("Rotation", element.rotation || 0, -180, 180, 1, (value) => update({ rotation: value })),
-      field("Align", alignSelect)
+      field("Align", alignSelect),
+      ...positionFields(element, update)
     );
   } else if (element.type === "image") {
     const assetName = el("span", { class: "imgpick-name" }, element.asset || "No image selected");
@@ -369,8 +450,10 @@ function renderPropertiesPanel() {
     panel.append(
       field("Image", el("div", { class: "row" }, chooseBtn, assetName)),
       rangeField("Width", element.width, 0.02, 1, 0.01, (value) => update({ width: value })),
+      numberField("Width %", element.width * 100, 0.1, (v) => update({ width: v / 100 })),
       rangeField("Rotation", element.rotation || 0, -180, 180, 1, (value) => update({ rotation: value })),
-      rangeField("Opacity", element.opacity == null ? 1 : element.opacity, 0, 1, 0.05, (value) => update({ opacity: value }))
+      rangeField("Opacity", element.opacity == null ? 1 : element.opacity, 0, 1, 0.05, (value) => update({ opacity: value })),
+      ...positionFields(element, update)
     );
   } else if (element.type === "frame") {
     const colorInput = el("input", { type: "color", value: element.color || "#000000" });
@@ -383,58 +466,6 @@ function renderPropertiesPanel() {
     );
   }
 }
-
-/* ---------------------------------------------------------- canvas events */
-
-function bindCanvasEvents(canvas) {
-  canvas.onmousedown = (event) => {
-    const rect = canvas.getBoundingClientRect();
-    const size = designerCanvasSize();
-    const px = ((event.clientX - rect.left) / rect.width) * size.width;
-    const py = ((event.clientY - rect.top) / rect.height) * size.height;
-    const index = hitTest(px, py, size);
-    selectElement(index);
-    if (index >= 0) {
-      designerState.dragging = true;
-      const element = designerState.elements[index];
-      designerState.dragOffset = { x: px / size.width - element.x, y: py / size.height - element.y };
-    }
-  };
-
-  canvas.onmousemove = (event) => {
-    if (!designerState.dragging || designerState.selected < 0) return;
-    const rect = canvas.getBoundingClientRect();
-    const size = designerCanvasSize();
-    const px = ((event.clientX - rect.left) / rect.width) * size.width;
-    const py = ((event.clientY - rect.top) / rect.height) * size.height;
-    const element = designerState.elements[designerState.selected];
-    element.x = Math.min(1, Math.max(0, px / size.width - designerState.dragOffset.x));
-    element.y = Math.min(1, Math.max(0, py / size.height - designerState.dragOffset.y));
-    redraw();
-  };
-
-  const stopDrag = () => {
-    designerState.dragging = false;
-  };
-  canvas.onmouseup = stopDrag;
-  canvas.onmouseleave = stopDrag;
-}
-
-function bindKeyboardEvents() {
-  document.addEventListener("keydown", (event) => {
-    if (state.active !== "DESIGNER") return;
-    const tag = (event.target.tagName || "").toLowerCase();
-    if (tag === "input" || tag === "textarea" || tag === "select") return;
-    if (event.key === "Delete" || event.key === "Backspace") {
-      if (designerState.selected >= 0) {
-        event.preventDefault();
-        deleteElement(designerState.selected);
-      }
-    }
-  });
-}
-
-let designerKeyboardBound = false;
 
 /* --------------------------------------------------------------- layout */
 
@@ -455,9 +486,6 @@ function buildToolbar() {
   orientationSelect.value = designerState.orientation;
   orientationSelect.onchange = () => {
     designerState.orientation = orientationSelect.value;
-    const canvas = $("designer-canvas");
-    resizeCanvas(canvas);
-    redraw();
   };
 
   return el(
@@ -584,6 +612,16 @@ function buildSampleToggle() {
   return el("label", { class: "row" }, checkbox, "Show sample picture");
 }
 
+function buildZoomControls() {
+  const zoomOut = el("button", { class: "btn small ghost", title: "Zoom out" }, "−");
+  zoomOut.onclick = () => designerState.editor && designerState.editor.setZoom(designerState.editor.viewport.scale / 1.25);
+  const zoomIn = el("button", { class: "btn small ghost", title: "Zoom in" }, "+");
+  zoomIn.onclick = () => designerState.editor && designerState.editor.setZoom(designerState.editor.viewport.scale * 1.25);
+  const reset = el("button", { class: "btn small ghost", title: "Reset view" }, "⤢");
+  reset.onclick = () => designerState.editor && designerState.editor.resetView();
+  return el("div", { class: "canvas-zoom-controls" }, zoomOut, zoomIn, reset);
+}
+
 function renderDesignerPage() {
   $("section-title").textContent = "Overlay designer";
   $("section-hint").textContent = "Design a transparent print overlay: texts, images and frames laid over the final picture.";
@@ -591,7 +629,8 @@ function renderDesignerPage() {
   const canvasWrap = el(
     "div",
     { class: "designer-canvas-wrap" },
-    el("canvas", { id: "designer-canvas" }),
+    el("div", { class: "designer-canvas-stack" }, el("canvas", { id: "designer-canvas" }), buildZoomControls()),
+    el("div", { class: "designer-caption", id: "designer-geometry-caption" }, "Layout: …"),
     buildSampleToggle()
   );
 
@@ -611,14 +650,24 @@ function renderDesignerPage() {
 
   const canvas = $("designer-canvas");
   resizeCanvas(canvas);
-  bindCanvasEvents(canvas);
-  if (!designerKeyboardBound) {
-    bindKeyboardEvents();
-    designerKeyboardBound = true;
-  }
+
+  if (designerState.editor) designerState.editor.destroy();
+  designerState.editor = CanvasEditor.create({
+    canvas,
+    getItems: () => designerState.elements,
+    itemRect: elementItemRect,
+    setItemRect: setElementItemRect,
+    draw: drawScene,
+    onSelect: onCanvasSelect,
+    onChange: () => renderPropertiesPanel(),
+    onDelete: (item) => deleteElement(designerState.elements.indexOf(item)),
+    aspectLocked: (item) => !!item && item.type === "image",
+  });
+  registerPageCleanup(() => designerState.editor && designerState.editor.destroy());
+
   if (designerState.showSample) loadSampleBackdrop();
 
   renderElementList();
   renderPropertiesPanel();
-  redraw();
+  fetchDesignerGeometry();
 }

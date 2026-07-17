@@ -527,6 +527,23 @@ async function uploadAsset(file) {
 
 /* -------------------------------------------------------------- rendering */
 
+// Pages that own resources tied to document-level listeners (e.g. a
+// CanvasEditor's keyboard nudge/delete handling) register a cleanup callback
+// here; it is invoked right before navigating to a *different* page/section
+// so those listeners don't stay active while the page is no longer visible.
+let activePageCleanup = null;
+
+function registerPageCleanup(fn) {
+  activePageCleanup = fn;
+}
+
+function leaveActivePage() {
+  if (activePageCleanup) {
+    activePageCleanup();
+    activePageCleanup = null;
+  }
+}
+
 function renderNav() {
   const nav = $("nav");
   nav.replaceChildren();
@@ -538,6 +555,7 @@ function renderNav() {
       page.label
     );
     item.onclick = () => {
+      if (state.active !== page.id) leaveActivePage();
       state.active = page.id;
       renderNav();
       page.render();
@@ -554,6 +572,7 @@ function renderNav() {
       dirty ? el("span", { class: "badge" }, dirty) : null
     );
     item.onclick = () => {
+      if (state.active !== section.name) leaveActivePage();
       state.active = section.name;
       renderNav();
       renderSection(section.name);

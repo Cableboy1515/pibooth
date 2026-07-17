@@ -449,6 +449,60 @@ input[type="color"] {
   border-top: 1px solid var(--border);
 }
 
+/* Numeric X/Y/W/H-style property grid (designer + layout pages) */
+.designer-numeric-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+.designer-numeric-grid .designer-field { gap: 3px; }
+.designer-numeric-grid input[type="number"] { padding: 6px 8px; font-size: 13px; }
+
+@media (max-width: 480px) {
+  .designer-numeric-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
+/* Canvas + floating zoom controls */
+.designer-canvas-stack { position: relative; display: inline-block; max-width: 100%; }
+.canvas-zoom-controls {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  display: flex;
+  gap: 4px;
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 3px;
+}
+.canvas-zoom-controls .btn.small { padding: 3px 9px; }
+.designer-caption { font-size: 12.5px; color: var(--muted); }
+
+/* --------------------------------------------------------- layout designer */
+.layout-chip-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.layout-chip {
+  position: relative;
+  border: 1px solid var(--border);
+  background: #fff;
+  color: var(--muted);
+  border-radius: 16px;
+  padding: 5px 12px 5px 12px;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.layout-chip.present { border-color: var(--accent-dark); color: var(--text); }
+.layout-chip.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.layout-chip-close {
+  margin-left: 6px;
+  display: inline-block;
+  opacity: 0.85;
+}
+.layout-chip-close:hover { opacity: 1; }
+
 /* ---------------------------------------------------------------- toasts */
 .toast-region { position: fixed; right: 20px; bottom: 20px; display: flex; flex-direction: column; gap: 8px; z-index: 60; }
 .toast {

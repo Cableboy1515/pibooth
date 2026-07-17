@@ -121,6 +121,65 @@ def test_render_missing_image_asset_skipped(tmp_path):
     assert image.size == (1800, 2700)
 
 
+def _has_ink(image, x_fraction, y_fraction=0.5):
+    """True if any non-transparent pixel exists in a region around the given
+    fractional position (used to check whether a text element rendered).
+    """
+    cx, cy = int(x_fraction * image.width), int(y_fraction * image.height)
+    region = image.crop((cx - 150, cy - 100, cx + 150, cy + 100))
+    return any(region.getpixel((x, y))[3] > 0 for x in range(region.width) for y in range(region.height))
+
+
+_LAYERED_SPEC = {
+    "name": "layered",
+    "orientation": "portrait",
+    "elements": [
+        {
+            "type": "text",
+            "text": "BG",
+            "font": "Amatic-Bold",
+            "color": "#ff0000",
+            "x": 0.25,
+            "y": 0.5,
+            "size": 0.2,
+            "rotation": 0,
+            "align": "center",
+            "layer": "background",
+        },
+        {
+            "type": "text",
+            "text": "OV",
+            "font": "Amatic-Bold",
+            "color": "#00ff00",
+            "x": 0.75,
+            "y": 0.5,
+            "size": 0.2,
+            "rotation": 0,
+            "align": "center",
+            "layer": "overlay",
+        },
+    ],
+}
+
+
+def test_render_design_layer_filter_background(tmp_path):
+    image = render_design(_LAYERED_SPEC, str(tmp_path), (1800, 2700), layer="background")
+    assert _has_ink(image, 0.25)
+    assert not _has_ink(image, 0.75)
+
+
+def test_render_design_layer_filter_overlay(tmp_path):
+    image = render_design(_LAYERED_SPEC, str(tmp_path), (1800, 2700), layer="overlay")
+    assert _has_ink(image, 0.75)
+    assert not _has_ink(image, 0.25)
+
+
+def test_render_design_no_layer_renders_every_element(tmp_path):
+    image = render_design(_LAYERED_SPEC, str(tmp_path), (1800, 2700))
+    assert _has_ink(image, 0.25)
+    assert _has_ink(image, 0.75)
+
+
 # --------------------------------------------------------------------- API
 
 
@@ -184,6 +243,99 @@ def test_designs_assign_sets_overlay_config(client, web_cfg):
     assert web_cfg.get("PICTURE", "overlays") == f'"{png_path}"'
     with open(web_cfg.filename) as fp:
         assert png_path in fp.read()
+
+
+def test_designs_assign_sets_background_config(client, web_cfg):
+    assets_dir = web_cfg.join_path("assets")
+    make_asset(assets_dir, "photo.png")
+    spec = {
+        "name": "with-bg",
+        "orientation": "portrait",
+        "elements": [
+            {
+                "type": "image",
+                "asset": "photo.png",
+                "x": 0.5,
+                "y": 0.5,
+                "width": 0.5,
+                "rotation": 0,
+                "opacity": 1.0,
+                "layer": "background",
+            }
+        ],
+    }
+    response = client.post("/api/designs", json={"spec": spec, "assign": True})
+    assert response.status_code == 200
+    payload = response.get_json()
+    png_path = payload["png_path"]
+    bg_png_path = payload["background_png_path"]
+    assert bg_png_path is not None
+
+    designs_dir = osp.join(assets_dir, "designs")
+    assert osp.isfile(osp.join(designs_dir, "with-bg.png"))
+    assert osp.isfile(osp.join(designs_dir, "with-bg.background.png"))
+
+    assert web_cfg.get("PICTURE", "overlays") == f'"{png_path}"'
+    assert web_cfg.get("PICTURE", "backgrounds") == f'"{bg_png_path}"'
+
+
+def test_designs_assign_without_background_leaves_config_untouched(client, web_cfg):
+    spec = {
+        "name": "overlay-only",
+        "orientation": "portrait",
+        "elements": [{"type": "frame", "color": "#000000", "width": 0.01, "radius": 0.0, "inset": 0.02}],
+    }
+    response = client.post("/api/designs", json={"spec": spec, "assign": True})
+    assert response.status_code == 200
+    assert response.get_json()["background_png_path"] is None
+    assert web_cfg.get("PICTURE", "backgrounds") == "(255, 255, 255)"
+    designs_dir = osp.join(web_cfg.join_path("assets"), "designs")
+    assert not osp.isfile(osp.join(designs_dir, "overlay-only.background.png"))
+
+
+def test_designs_reassign_without_background_resets_config(client, web_cfg):
+    assets_dir = web_cfg.join_path("assets")
+    make_asset(assets_dir, "photo.png")
+    spec_with_bg = {
+        "name": "toggle-bg",
+        "orientation": "portrait",
+        "elements": [
+            {
+                "type": "image",
+                "asset": "photo.png",
+                "x": 0.5,
+                "y": 0.5,
+                "width": 0.5,
+                "rotation": 0,
+                "opacity": 1.0,
+                "layer": "background",
+            }
+        ],
+    }
+    response = client.post("/api/designs", json={"spec": spec_with_bg, "assign": True})
+    bg_png_path = response.get_json()["background_png_path"]
+    assert web_cfg.get("PICTURE", "backgrounds") == f'"{bg_png_path}"'
+
+    spec_without_bg = {"name": "toggle-bg", "orientation": "portrait", "elements": []}
+    response2 = client.post("/api/designs", json={"spec": spec_without_bg, "assign": True})
+    assert response2.status_code == 200
+    assert response2.get_json()["background_png_path"] is None
+    assert web_cfg.get("PICTURE", "backgrounds") == "(255, 255, 255)"
+
+    designs_dir = osp.join(assets_dir, "designs")
+    assert not osp.isfile(osp.join(designs_dir, "toggle-bg.background.png"))
+
+
+def test_designs_invalid_layer_value(client):
+    spec = {
+        "name": "bad-layer",
+        "orientation": "portrait",
+        "elements": [
+            {"type": "frame", "color": "#000000", "width": 0.01, "radius": 0.0, "inset": 0.02, "layer": "sideways"}
+        ],
+    }
+    response = client.post("/api/designs", json={"spec": spec})
+    assert response.status_code == 400
 
 
 def test_designs_invalid_spec_missing_name(client):
@@ -309,6 +461,37 @@ def test_designs_delete_removes_files_and_resets_overlay(client, web_cfg):
     assert not osp.isfile(osp.join(designs_dir, "to-delete.json"))
     assert not osp.isfile(osp.join(designs_dir, "to-delete.png"))
     assert web_cfg.get("PICTURE", "overlays") == ""
+
+
+def test_designs_delete_removes_background_and_resets_config(client, web_cfg):
+    assets_dir = web_cfg.join_path("assets")
+    make_asset(assets_dir, "photo.png")
+    spec = {
+        "name": "bg-to-delete",
+        "orientation": "portrait",
+        "elements": [
+            {
+                "type": "image",
+                "asset": "photo.png",
+                "x": 0.5,
+                "y": 0.5,
+                "width": 0.5,
+                "rotation": 0,
+                "opacity": 1.0,
+                "layer": "background",
+            }
+        ],
+    }
+    response = client.post("/api/designs", json={"spec": spec, "assign": True})
+    bg_png_path = response.get_json()["background_png_path"]
+    assert web_cfg.get("PICTURE", "backgrounds") == f'"{bg_png_path}"'
+
+    delete_response = client.delete("/api/designs/bg-to-delete")
+    assert delete_response.status_code == 200
+
+    designs_dir = osp.join(assets_dir, "designs")
+    assert not osp.isfile(osp.join(designs_dir, "bg-to-delete.background.png"))
+    assert web_cfg.get("PICTURE", "backgrounds") == "(255, 255, 255)"
 
 
 def test_designs_delete_missing_returns_404(client):

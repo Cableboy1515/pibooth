@@ -125,7 +125,9 @@ _RENDERERS = {
 }
 
 
-def render_design(spec: dict[str, Any], assets_dir: str, size: tuple[int, int]) -> Image.Image:
+def render_design(
+    spec: dict[str, Any], assets_dir: str, size: tuple[int, int], layer: str | None = None
+) -> Image.Image:
     """Render a design spec into a transparent RGBA PNG at print resolution.
 
     :param spec: design spec, see module documentation for the JSON schema
@@ -133,12 +135,17 @@ def render_design(spec: dict[str, Any], assets_dir: str, size: tuple[int, int]) 
     :param size: canvas size in pixels, matching ``spec["orientation"]`` (the
                  final-picture geometry, see
                  :py:func:`pibooth.web.templates_api.get_final_picture_size`)
+    :param layer: if given, only render elements whose ``layer`` field matches
+                   (elements without a ``layer`` field default to ``"overlay"``);
+                   if ``None``, render every element regardless of layer
 
     :return: RGBA image of the given size
     """
     canvas = Image.new("RGBA", size, (0, 0, 0, 0))
 
     for element in spec.get("elements", []):
+        if layer is not None and element.get("layer", "overlay") != layer:
+            continue
         element_type = element.get("type")
         renderer = _RENDERERS.get(element_type)
         if renderer is None:

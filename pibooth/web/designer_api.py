@@ -15,6 +15,7 @@ from typing import Any
 from flask import Blueprint, Response, abort, current_app, jsonify, request, send_file
 
 from pibooth import fonts
+from pibooth.config.parser import DEFAULT
 from pibooth.utils import LOGGER
 from pibooth.web.designer import render_design
 from pibooth.web.templates_api import get_final_picture_size, load_template_by_name
@@ -100,17 +101,28 @@ def _template_canvas_size(cfg: Any, template_name: str, orientation: str) -> tup
     return width, height
 
 
-def _design_paths(cfg: Any, name: str) -> tuple[str, str, str]:
-    """Return (sanitized name, json path, png path) for a design name."""
+def _design_paths(cfg: Any, name: str) -> tuple[str, str, str, str]:
+    """Return (sanitized name, json path, overlay png path, background png
+    path) for a design name. The background png may not exist on disk (only
+    designs with a background-layer element produce one).
+    """
     name = _sanitize_name(name)
     designs_dir = _designs_dir(cfg)
-    return name, osp.join(designs_dir, f"{name}.json"), osp.join(designs_dir, f"{name}.png")
+    return (
+        name,
+        osp.join(designs_dir, f"{name}.json"),
+        osp.join(designs_dir, f"{name}.png"),
+        osp.join(designs_dir, f"{name}.background.png"),
+    )
 
 
 def _validate_element(element: Any, index: int) -> None:
     """Raise ValueError with a helpful description if the element is invalid."""
     if not isinstance(element, dict):
         raise ValueError(f"Element #{index} must be an object")
+
+    if "layer" in element and element["layer"] not in ("overlay", "background"):
+        raise ValueError(f"Element #{index} field 'layer' must be 'overlay' or 'background'")
 
     schema = _ELEMENT_SCHEMA.get(str(element.get("type", "")))
     if schema is None:
@@ -183,7 +195,7 @@ def list_designs() -> Response:
 def get_design(name: str) -> Response:
     cfg = _pibooth()["cfg"]
     try:
-        name, json_path, _ = _design_paths(cfg, name)
+        name, json_path, _, _ = _design_paths(cfg, name)
     except ValueError as ex:
         abort(400, description=str(ex))
     if not osp.isfile(json_path):
@@ -220,15 +232,24 @@ def create_design() -> Response:
         except ValueError as ex:
             abort(400, description=str(ex))
 
+        elements = spec.get("elements", [])
+        has_bg = any(isinstance(e, dict) and e.get("layer") == "background" for e in elements)
+
         try:
-            image = render_design(spec, assets_dir, size)
+            overlay_image = render_design(spec, assets_dir, size, layer="overlay")
+            bg_image = render_design(spec, assets_dir, size, layer="background") if has_bg else None
         except (OSError, ValueError) as ex:
             abort(400, description=f"Cannot render design: {ex}")
 
         os.makedirs(designs_dir, exist_ok=True)
         png_path = osp.join(designs_dir, f"{name}.png")
+        bg_png_path = osp.join(designs_dir, f"{name}.background.png")
         json_path = osp.join(designs_dir, f"{name}.json")
-        image.save(png_path)
+        overlay_image.save(png_path)
+        if bg_image is not None:
+            bg_image.save(bg_png_path)
+        elif osp.isfile(bg_png_path):
+            os.remove(bg_png_path)
         stored_spec = {**spec, "name": name}
         if template_name:
             stored_spec["template"] = template_name
@@ -237,12 +258,16 @@ def create_design() -> Response:
 
         if assign:
             cfg.set("PICTURE", "overlays", f'"{png_path}"')
+            if has_bg:
+                cfg.set("PICTURE", "backgrounds", f'"{bg_png_path}"')
+            elif cfg.get("PICTURE", "backgrounds").strip('"') == bg_png_path:
+                cfg.set("PICTURE", "backgrounds", str(DEFAULT["PICTURE"]["backgrounds"][0]))
             cfg.save()
 
     LOGGER.info("Design '%s' saved from the web interface", name)
     if assign:
         pibooth["notify"]()
-    return jsonify({"name": name, "png_path": png_path})
+    return jsonify({"name": name, "png_path": png_path, "background_png_path": bg_png_path if has_bg else None})
 
 
 @designer_api.route("/designs/<name>", methods=["DELETE"])
@@ -250,27 +275,38 @@ def delete_design(name: str) -> Response:
     pibooth = _pibooth()
     cfg = pibooth["cfg"]
     try:
-        name, json_path, png_path = _design_paths(cfg, name)
+        name, json_path, png_path, bg_png_path = _design_paths(cfg, name)
     except ValueError as ex:
         abort(400, description=str(ex))
     if not osp.isfile(json_path):
         abort(404, description=f"Design '{name}' not found")
 
     with pibooth["lock"]:
-        current = cfg.get("PICTURE", "overlays").strip('"')
-        was_assigned = bool(current) and osp.isfile(png_path) and osp.abspath(current) == osp.abspath(png_path)
+        current_overlay = cfg.get("PICTURE", "overlays").strip('"')
+        was_assigned = (
+            bool(current_overlay) and osp.isfile(png_path) and osp.abspath(current_overlay) == osp.abspath(png_path)
+        )
+        current_bg = cfg.get("PICTURE", "backgrounds").strip('"')
+        bg_was_assigned = (
+            bool(current_bg) and osp.isfile(bg_png_path) and osp.abspath(current_bg) == osp.abspath(bg_png_path)
+        )
 
         if osp.isfile(json_path):
             os.remove(json_path)
         if osp.isfile(png_path):
             os.remove(png_path)
+        if osp.isfile(bg_png_path):
+            os.remove(bg_png_path)
 
         if was_assigned:
             cfg.set("PICTURE", "overlays", "")
+        if bg_was_assigned:
+            cfg.set("PICTURE", "backgrounds", str(DEFAULT["PICTURE"]["backgrounds"][0]))
+        if was_assigned or bg_was_assigned:
             cfg.save()
 
     LOGGER.info("Design '%s' deleted from the web interface", name)
-    if was_assigned:
+    if was_assigned or bg_was_assigned:
         pibooth["notify"]()
     return jsonify({"ok": True})
 

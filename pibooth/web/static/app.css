@@ -450,6 +450,17 @@ input[type="color"] {
   flex: 1;
   min-width: 0;
 }
+.designer-element-layer {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  padding: 1px 5px;
+  border-radius: 4px;
+  vertical-align: middle;
+}
+.designer-element-layer-overlay { background: rgba(35, 149, 135, 0.15); color: var(--accent-dark); }
+.designer-element-layer-background { background: rgba(192, 57, 43, 0.12); color: var(--danger); }
 
 .designer-save-row {
   display: flex;

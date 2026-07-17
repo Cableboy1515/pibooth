@@ -121,12 +121,19 @@ function elementLabel(element) {
 
 function newElement(type) {
   if (type === "text") {
-    return { type: "text", text: "Sample text", font: "Amatic-Bold", color: "#000000", x: 0.5, y: 0.5, size: 0.06, rotation: 0, align: "center" };
+    return { type: "text", text: "Sample text", font: "Amatic-Bold", color: "#000000", x: 0.5, y: 0.5, size: 0.06, rotation: 0, align: "center", layer: "overlay" };
   }
   if (type === "image") {
-    return { type: "image", asset: "", x: 0.5, y: 0.5, width: 0.2, rotation: 0, opacity: 1 };
+    return { type: "image", asset: "", x: 0.5, y: 0.5, width: 0.2, rotation: 0, opacity: 1, layer: "overlay" };
   }
-  return { type: "frame", color: "#d4af37", width: 0.01, radius: 0.03, inset: 0.02 };
+  return { type: "frame", color: "#d4af37", width: 0.01, radius: 0.03, inset: 0.02, layer: "overlay" };
+}
+
+/** An element's layer defaults to "overlay" when absent (older saved
+ * designs predate the background-layer feature).
+ */
+function elementLayer(element) {
+  return element.layer === "background" ? "background" : "overlay";
 }
 
 /* -------------------------------------------------------- canvas drawing */
@@ -289,13 +296,18 @@ function drawGuideLayer(ctx, size) {
   for (const shape of designerState.guidePage.shapes) drawGuideShape(ctx, shape, size);
 }
 
-/** CanvasEditor draw() callback: paint the layout guides, the sample
- * backdrop, then every element, in canvas-logical pixel space (the editor
- * has already applied the zoom/pan transform and cleared the canvas by the
- * time this runs).
+/** CanvasEditor draw() callback: paint background-layer elements, then the
+ * layout guides and sample backdrop (standing in for the photos), then
+ * overlay-layer elements, in canvas-logical pixel space (the editor has
+ * already applied the zoom/pan transform and cleared the canvas by the time
+ * this runs). This mirrors the real print stack: background elements sit
+ * behind the photos, overlay elements sit in front of them.
  */
 function drawScene(ctx) {
   const size = designerCanvasSize();
+  designerState.elements
+    .filter((element) => elementLayer(element) === "background")
+    .forEach((element) => drawElement(ctx, element, size));
   drawGuideLayer(ctx, size);
   if (designerState.showSample && designerState.sampleImage && designerState.sampleImage.complete) {
     ctx.save();
@@ -303,7 +315,9 @@ function drawScene(ctx) {
     ctx.drawImage(designerState.sampleImage, 0, 0, size.width, size.height);
     ctx.restore();
   }
-  designerState.elements.forEach((element) => drawElement(ctx, element, size));
+  designerState.elements
+    .filter((element) => elementLayer(element) !== "background")
+    .forEach((element) => drawElement(ctx, element, size));
 }
 
 function redraw() {
@@ -443,10 +457,15 @@ function renderElementList() {
       event.stopPropagation();
       deleteElement(index);
     };
+    const layerBadge = el(
+      "span",
+      { class: `designer-element-layer designer-element-layer-${elementLayer(element)}` },
+      elementLayer(element) === "background" ? "BG" : "OV"
+    );
     const row = el(
       "div",
       { class: `designer-element-row${index === designerState.selected ? " active" : ""}` },
-      el("span", { class: "designer-element-label" }, elementLabel(element)),
+      el("span", { class: "designer-element-label" }, layerBadge, " ", elementLabel(element)),
       el("div", { class: "row" }, up, down, dup, del)
     );
     row.onclick = () => selectElement(index);
@@ -502,6 +521,19 @@ function positionFields(element, update) {
   ];
 }
 
+/** Layer select shown at the top of every element's properties panel:
+ * "Background" renders behind the photos (PICTURE/backgrounds), "Overlay"
+ * (default) renders on top of them (PICTURE/overlays) — see drawScene().
+ */
+function layerField(element, update) {
+  const select = el("select");
+  select.append(el("option", { value: "overlay" }, "Overlay (in front of photos)"));
+  select.append(el("option", { value: "background" }, "Background (behind photos)"));
+  select.value = elementLayer(element);
+  select.onchange = () => update({ layer: select.value });
+  return field("Layer", select);
+}
+
 function renderPropertiesPanel() {
   const panel = $("designer-properties");
   if (!panel) return;
@@ -518,6 +550,8 @@ function renderPropertiesPanel() {
     renderElementList();
     redraw();
   }
+
+  panel.append(layerField(element, update));
 
   if (element.type === "text") {
     const textInput = el("textarea", { rows: "2" });
@@ -825,7 +859,13 @@ function renderDesignerPage() {
   if (designerState.editor) designerState.editor.destroy();
   designerState.editor = CanvasEditor.create({
     canvas,
-    getItems: () => designerState.elements,
+    // Same bottom-to-top order as drawScene() (background layer, then
+    // overlay layer) so hit-testing's reverse walk picks the visually
+    // topmost element first when a background and overlay element overlap.
+    getItems: () => [
+      ...designerState.elements.filter((element) => elementLayer(element) === "background"),
+      ...designerState.elements.filter((element) => elementLayer(element) !== "background"),
+    ],
     itemRect: elementItemRect,
     setItemRect: setElementItemRect,
     draw: drawScene,

@@ -1,3 +1,4 @@
+import json
 import os.path as osp
 
 import pytest
@@ -224,6 +225,74 @@ def test_designs_invalid_element_non_numeric_field(client):
         ],
     }
     response = client.post("/api/designs", json={"spec": spec})
+    assert response.status_code == 400
+
+
+def test_designs_with_template_renders_at_template_page_size(client, web_cfg):
+    template = {
+        "name": "wedding-strip",
+        "pages": [
+            {
+                "captures": 2,
+                "orientation": "portrait",
+                "paper": "custom",
+                "dpi": 300,
+                "size": [600, 1800],
+                "shapes": [],
+            }
+        ],
+    }
+    response = client.post("/api/templates", json={"template": template})
+    assert response.status_code == 200
+
+    spec = {"name": "for-strip", "orientation": "portrait", "elements": []}
+    response = client.post("/api/designs", json={"spec": spec, "template": "wedding-strip"})
+    assert response.status_code == 200
+
+    designs_dir = osp.join(web_cfg.join_path("assets"), "designs")
+    with Image.open(osp.join(designs_dir, "for-strip.png")) as png:
+        assert png.size == (600, 1800)
+
+    with open(osp.join(designs_dir, "for-strip.json"), encoding="utf-8") as fp:
+        stored = json.load(fp)
+    assert stored["template"] == "wedding-strip"
+
+    # The template must not have been assigned to the booth as a side effect
+    assert web_cfg.get("PICTURE", "template") == ""
+
+
+def test_designs_with_template_swaps_dims_for_mismatched_orientation(client, web_cfg):
+    # Template only has a landscape page; requesting a portrait design must
+    # swap dimensions so the render still comes out in the design's own
+    # orientation (mirrors _canvas_size()'s existing swap behaviour).
+    template = {
+        "name": "landscape-only",
+        "pages": [
+            {
+                "captures": 1,
+                "orientation": "landscape",
+                "paper": "custom",
+                "dpi": 300,
+                "size": [1800, 1200],
+                "shapes": [],
+            }
+        ],
+    }
+    response = client.post("/api/templates", json={"template": template})
+    assert response.status_code == 200
+
+    spec = {"name": "portrait-design", "orientation": "portrait", "elements": []}
+    response = client.post("/api/designs", json={"spec": spec, "template": "landscape-only"})
+    assert response.status_code == 200
+
+    designs_dir = osp.join(web_cfg.join_path("assets"), "designs")
+    with Image.open(osp.join(designs_dir, "portrait-design.png")) as png:
+        assert png.size == (1200, 1800)
+
+
+def test_designs_with_unknown_template_returns_400(client):
+    spec = {"name": "orphan", "orientation": "portrait", "elements": []}
+    response = client.post("/api/designs", json={"spec": spec, "template": "does-not-exist"})
     assert response.status_code == 400
 
 

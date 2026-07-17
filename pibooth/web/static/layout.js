@@ -4,7 +4,7 @@
 /* Register after the overlay designer (see designer.js CUSTOM_PAGES.push);
  * script order in index.html guarantees this entry lands last.
  */
-CUSTOM_PAGES.push({ id: "LAYOUT", label: "Layout designer", icon: "📐", render: renderLayoutPage });
+CUSTOM_PAGES.push({ id: "LAYOUT", label: "Layout designer", icon: "📐", render: renderLayoutPage, group: "design", order: 0 });
 
 //: Mirrors pibooth.printer.PAPER_FORMATS (inches, width x height in portrait).
 const LAYOUT_PAPER_FORMATS = {
@@ -18,7 +18,6 @@ const LAYOUT_PAPER_FORMATS = {
 };
 
 const LAYOUT_CANVAS_HEIGHT = 520;
-const LAYOUT_CAPTURE_COLORS = ["#8fb8ae", "#c9a66b", "#a98fb8", "#6ba3c9"];
 
 const layoutState = {
   templateName: "",
@@ -145,7 +144,7 @@ function drawLayoutShape(ctx, shape, size) {
   ctx.rotate(((shape.rotation || 0) * Math.PI) / 180);
 
   if (shape.type === "capture") {
-    ctx.fillStyle = LAYOUT_CAPTURE_COLORS[(shape.index - 1) % LAYOUT_CAPTURE_COLORS.length];
+    ctx.fillStyle = SLOT_COLORS[(shape.index - 1) % SLOT_COLORS.length];
     ctx.beginPath();
     ctx.roundRect(-w / 2, -h / 2, w, h, Math.min(w, h) * 0.06);
     ctx.fill();
@@ -468,6 +467,74 @@ async function openLoadTemplateDialog() {
   }
 }
 
+/* -------------------------------------------------------- export as guide */
+
+async function isTemplateNameSaved(name) {
+  try {
+    const payload = await api("/api/templates");
+    return payload.templates.some((t) => t.name === name);
+  } catch (error) {
+    return false;
+  }
+}
+
+function closeExportMenu() {
+  const menu = $("layout-export-menu");
+  if (menu) menu.remove();
+  document.removeEventListener("mousedown", onExportMenuOutsideClick);
+}
+
+function onExportMenuOutsideClick(event) {
+  const menu = $("layout-export-menu");
+  const anchor = $("layout-export-btn");
+  if (menu && !menu.contains(event.target) && event.target !== anchor) closeExportMenu();
+}
+
+function buildExportLink(label, href) {
+  const link = el("a", { class: "layout-export-link", href, download: "" }, label);
+  link.onclick = () => closeExportMenu();
+  return link;
+}
+
+function openExportMenu(anchorBtn) {
+  closeExportMenu();
+  const page = activeLayoutPage();
+  if (!page) return;
+  const name = encodeURIComponent(layoutState.templateName);
+  const query = `captures=${page.captures}&orientation=${pageOrientationOf(page)}`;
+  const base = `/api/templates/${name}/guide`;
+
+  const menu = el(
+    "div",
+    { class: "layout-export-menu", id: "layout-export-menu" },
+    buildExportLink("SVG (vector)", `${base}.svg?${query}`),
+    buildExportLink("PNG (print-size)", `${base}.png?${query}`),
+    el(
+      "div",
+      { class: "layout-export-hint" },
+      "Design your artwork over the guides, delete the guide layer, export a transparent PNG and upload it as overlay."
+    )
+  );
+
+  const rect = anchorBtn.getBoundingClientRect();
+  menu.style.left = `${rect.left}px`;
+  menu.style.top = `${rect.bottom + 6}px`;
+  document.body.append(menu);
+  setTimeout(() => document.addEventListener("mousedown", onExportMenuOutsideClick), 0);
+}
+
+function buildExportButton() {
+  const exportBtn = el("button", { class: "btn", id: "layout-export-btn" }, "Export for image editor…");
+  exportBtn.onclick = async () => {
+    if (!layoutState.templateName || !(await isTemplateNameSaved(layoutState.templateName))) {
+      toast("Save the layout first", "error");
+      return;
+    }
+    openExportMenu(exportBtn);
+  };
+  return exportBtn;
+}
+
 function buildLayoutSaveRow() {
   const assignCheckbox = el("input", { type: "checkbox" });
   assignCheckbox.checked = true;
@@ -540,7 +607,7 @@ function buildLayoutSaveRow() {
     "div",
     { class: "designer-save-row" },
     el("label", { class: "row" }, assignCheckbox, "Use for the booth"),
-    el("div", { class: "row" }, saveBtn, loadBtn, importLabel, newBtn)
+    el("div", { class: "row" }, saveBtn, loadBtn, importLabel, newBtn, buildExportButton())
   );
 }
 
@@ -627,7 +694,10 @@ function renderLayoutPage() {
     onDelete: (item) => deleteLayoutShape(activeLayoutPage().shapes.indexOf(item)),
     aspectLocked: () => false,
   });
-  registerPageCleanup(() => layoutState.editor && layoutState.editor.destroy());
+  registerPageCleanup(() => {
+    if (layoutState.editor) layoutState.editor.destroy();
+    closeExportMenu();
+  });
 
   renderLayoutToolbar();
   renderLayoutProperties();

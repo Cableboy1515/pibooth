@@ -12,6 +12,8 @@ from pibooth.pictures.template import (
     TemplatePictureFactory,
     load_template,
     parse_mxgraph,
+    render_layout_guide,
+    render_layout_guide_svg,
     template_from_dict,
 )
 
@@ -268,6 +270,65 @@ def test_template_picture_factory_missing_image_asset_skipped(tmp_path):
     assert image.size == (400, 600)
 
 
+# ------------------------------------------------------------ layout guide
+
+
+def test_render_layout_guide_size_and_capture_pixels():
+    template = template_from_dict(sample_template_dict())
+    page = template.get_page(2, PORTRAIT)
+
+    image = render_layout_guide(page)
+    assert image.size == page.size
+    assert image.mode == "RGBA"
+
+    # First capture rect: x=0.05..0.95, y=0.05..0.45 -> center (200, 150)
+    assert image.getpixel((200, 150))[3] > 0
+    # Outside every shape (top-left corner, before any capture/text rect)
+    assert image.getpixel((1, 1))[3] == 0
+
+
+def test_render_layout_guide_rotation_does_not_crash():
+    data = sample_template_dict()
+    data["pages"][0]["shapes"][0]["rotation"] = 25
+    template = template_from_dict(data)
+    page = template.get_page(1, PORTRAIT)
+
+    image = render_layout_guide(page)
+    assert image.size == page.size
+
+
+def test_render_layout_guide_svg_contents():
+    data = sample_template_dict()
+    data["pages"][0]["shapes"].append(
+        {"type": "image", "asset": "my <logo>.png", "x": 0.6, "y": 0.02, "width": 0.2, "height": 0.05, "rotation": 15}
+    )
+    template = template_from_dict(data)
+    page = template.get_page(1, PORTRAIT)
+
+    svg = render_layout_guide_svg(page)
+
+    # Physical size in inches (page.size is in px at page.dpi) and viewBox
+    width_in = page.size[0] / page.dpi
+    height_in = page.size[1] / page.dpi
+    assert f'width="{width_in}in"' in svg
+    assert f'height="{height_in}in"' in svg
+    assert f'viewBox="0 0 {page.size[0]} {page.size[1]}"' in svg
+
+    # Single deletable guide layer/group
+    assert svg.count('<g id="pibooth-layout-guides">') == 1
+
+    # One <rect> per capture shape, with the translucent fill
+    captures = [s for s in page.shapes if s.kind == "capture"]
+    assert svg.count("fill-opacity") == len(captures)
+
+    # Labels are escaped, not left as raw (unsafe) markup
+    assert "&lt;logo&gt;" in svg
+    assert "<logo>" not in svg
+
+    # Rotation renders as a rotate() transform
+    assert "rotate(15" in svg
+
+
 # ------------------------------------------------------------------- plugin
 
 
@@ -469,6 +530,50 @@ def test_api_geometry_with_template(client, web_cfg):
     payload = response.get_json()
     assert payload["source"] == "template"
     assert (payload["width"], payload["height"]) == (600, 1800)
+
+
+# ------------------------------------------------------------- guide export
+
+
+def test_api_template_guide_svg(client):
+    data = sample_template_dict()
+    response = client.post("/api/templates", json={"template": data})
+    assert response.status_code == 200
+
+    response = client.get("/api/templates/sample/guide.svg?captures=2&orientation=portrait")
+    assert response.status_code == 200
+    assert response.mimetype == "image/svg+xml"
+    assert "attachment" in response.headers["Content-Disposition"]
+    assert "sample-2-portrait-guide.svg" in response.headers["Content-Disposition"]
+    assert b"pibooth-layout-guides" in response.data
+
+
+def test_api_template_guide_png(client):
+    data = sample_template_dict()
+    response = client.post("/api/templates", json={"template": data})
+    assert response.status_code == 200
+
+    response = client.get("/api/templates/sample/guide.png?captures=1&orientation=portrait")
+    assert response.status_code == 200
+    assert response.mimetype == "image/png"
+    assert "attachment" in response.headers["Content-Disposition"]
+    assert "sample-1-portrait-guide.png" in response.headers["Content-Disposition"]
+    assert response.data.startswith(b"\x89PNG")
+
+
+def test_api_template_guide_unknown_template_returns_404(client):
+    assert client.get("/api/templates/does-not-exist/guide.svg?captures=1&orientation=portrait").status_code == 404
+    assert client.get("/api/templates/does-not-exist/guide.png?captures=1&orientation=portrait").status_code == 404
+
+
+def test_api_template_guide_unknown_page_returns_400(client):
+    data = sample_template_dict()
+    response = client.post("/api/templates", json={"template": data})
+    assert response.status_code == 200
+
+    response = client.get("/api/templates/sample/guide.svg?captures=4&orientation=portrait")
+    assert response.status_code == 400
+    assert "Available pages" in response.get_json()["description"]
 
 
 # -------------------------------------------------------------------- events

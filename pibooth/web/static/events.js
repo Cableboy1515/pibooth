@@ -5,7 +5,7 @@
  * renderNav()). Each entry renders itself into #section-title/#section-hint/
  * #section-body when clicked.
  */
-const CUSTOM_PAGES = [{ id: "EVENTS", label: "Events", icon: "🎉", render: renderEventsPage }];
+const CUSTOM_PAGES = [{ id: "EVENTS", label: "Events", icon: "🎉", render: renderEventsPage, group: "event", order: 0 }];
 
 const eventsState = {
   loaded: false,

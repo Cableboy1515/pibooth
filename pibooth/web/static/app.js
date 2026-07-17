@@ -649,10 +649,11 @@ function leaveActivePage() {
   }
 }
 
-function renderNav() {
-  const nav = $("nav");
-  nav.replaceChildren();
-  for (const page of CUSTOM_PAGES) {
+function renderCustomPageGroup(nav, groupName, headerLabel) {
+  const pages = CUSTOM_PAGES.filter((page) => page.group === groupName).sort((a, b) => (a.order || 0) - (b.order || 0));
+  if (!pages.length) return;
+  nav.append(el("div", { class: "nav-group-header" }, headerLabel));
+  for (const page of pages) {
     const item = el(
       "button",
       { class: `nav-item${page.id === state.active ? " active" : ""}` },
@@ -667,6 +668,15 @@ function renderNav() {
     };
     nav.append(item);
   }
+}
+
+function renderNav() {
+  const nav = $("nav");
+  nav.replaceChildren();
+  renderCustomPageGroup(nav, "design", "Design");
+  renderCustomPageGroup(nav, "event", "Event");
+
+  nav.append(el("div", { class: "nav-group-header" }, "Settings"));
   for (const section of state.schema.sections) {
     const dirty = state.dirty[section.name] ? Object.keys(state.dirty[section.name]).length : 0;
     const item = el(

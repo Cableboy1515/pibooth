@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import unquote
 from xml.etree import ElementTree
+from xml.sax.saxutils import escape
 
 from PIL import Image, ImageDraw, ImageFont
 from PIL.Image import Resampling
@@ -34,6 +35,16 @@ from pibooth.utils import LOGGER
 CAPTURE = "capture"
 TEXT = "text"
 IMAGE = "image"
+
+#: Muted slot palette used to render the layout guide layer (web overlay
+#: designer guide overlay, and the exported guide.svg/guide.png). Mirrors
+#: SLOT_COLORS in pibooth/web/static/canvas_editor.js — keep both in sync.
+GUIDE_COLORS: list[tuple[int, int, int]] = [
+    (143, 184, 174),  # #8fb8ae
+    (201, 166, 107),  # #c9a66b
+    (169, 143, 184),  # #a98fb8
+    (107, 163, 201),  # #6ba3c9
+]
 
 
 @dataclass
@@ -617,3 +628,149 @@ class TemplatePictureFactory(PilPictureFactory):
             label = shape.asset if shape.kind == IMAGE else str(shape.index)
             draw.text((10, 10), label, "red", font)
             self._paste_shape(layer, image, rect_x, rect_y, shape.rotation)
+
+
+# --- layout guide export (web overlay/layout designer) -----------------------
+
+
+def _composite_guide_layer(
+    canvas: Image.Image, layer: Image.Image, rect_x: int, rect_y: int, rect_w: int, rect_h: int, rotation: float
+) -> None:
+    """Rotate ``layer`` (sized to the shape's un-rotated rect) about its
+    center and alpha-composite it onto ``canvas``.
+
+    ``rotation`` follows the template's clockwise-degrees convention, while
+    :py:meth:`PIL.Image.Image.rotate` is counter-clockwise for positive
+    angles, hence the sign flip (same convention as
+    :meth:`TemplatePictureFactory._paste_shape`).
+    """
+    if rotation:
+        layer = layer.rotate(-rotation, expand=True)
+    width, height = layer.size
+    pos_x = rect_x + (rect_w - width) // 2
+    pos_y = rect_y + (rect_h - height) // 2
+    canvas.alpha_composite(layer, (pos_x, pos_y))
+
+
+def _draw_centered_text(
+    draw: ImageDraw.ImageDraw,
+    text: str,
+    rect_w: int,
+    rect_h: int,
+    max_height_fraction: float,
+    color: tuple[int, int, int, int],
+) -> None:
+    """Draw ``text`` centered in a ``rect_w`` x ``rect_h`` area, sized to fit
+    within ``max_height_fraction`` of the rect height (and the rect width).
+    """
+    font = fonts.get_pil_font(text, fonts.CURRENT, rect_w * 0.9, rect_h * max_height_fraction)
+    bbox = draw.textbbox((0, 0), text, font=font)
+    text_w, text_h = bbox[2] - bbox[0], bbox[3] - bbox[1]
+    draw.text(((rect_w - text_w) / 2 - bbox[0], (rect_h - text_h) / 2 - bbox[1]), text, fill=color, font=font)
+
+
+def render_layout_guide(page: TemplatePage) -> Image.Image:
+    """Render a transparent RGBA overlay of ``page``'s shapes, meant to be
+    used as a guide layer when designing artwork for the print layout in an
+    external image editor.
+
+    Same visual language as the web canvas guide layer: capture slots are
+    filled translucent rounded rects with a big slot number, text slots are
+    outlined boxes labeled "Text N", image slots are thin gray outlines
+    labeled with the asset basename.
+    """
+    canvas = Image.new("RGBA", page.size, (0, 0, 0, 0))
+    min_dim = min(page.size)
+
+    for shape in page.shapes:
+        rect_x, rect_y, rect_w, rect_h = shape.rect_px(page.size)
+        if rect_w <= 0 or rect_h <= 0:
+            continue
+
+        layer = Image.new("RGBA", (rect_w, rect_h), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(layer)
+        radius = max(1, min(int(min_dim * 0.02), rect_w // 2, rect_h // 2))
+
+        if shape.kind == CAPTURE:
+            color = GUIDE_COLORS[(shape.index - 1) % len(GUIDE_COLORS)]
+            draw.rounded_rectangle((0, 0, rect_w - 1, rect_h - 1), radius=radius, fill=(*color, 115))
+            _draw_centered_text(draw, str(shape.index), rect_w, rect_h, 0.5, (255, 255, 255, 255))
+        elif shape.kind == TEXT:
+            draw.rectangle((0, 0, rect_w - 1, rect_h - 1), outline=(102, 102, 102, 160), width=2)
+            _draw_centered_text(draw, f"Text {shape.index}", rect_w, rect_h, 0.25, (102, 102, 102, 220))
+        elif shape.kind == IMAGE:
+            draw.rectangle((0, 0, rect_w - 1, rect_h - 1), outline=(150, 150, 150, 255), width=2)
+            _draw_centered_text(draw, shape.asset or "image", rect_w, rect_h, 0.15, (120, 120, 120, 255))
+
+        _composite_guide_layer(canvas, layer, rect_x, rect_y, rect_w, rect_h, shape.rotation)
+
+    return canvas
+
+
+def render_layout_guide_svg(page: TemplatePage) -> str:
+    """Render a standalone SVG document of ``page``'s shapes as a single
+    deletable guide layer/group, meant for import at true print size into an
+    external image editor (see :func:`render_layout_guide` for the PIL/PNG
+    equivalent and its visual language).
+    """
+    width_px, height_px = page.size
+    width_in = width_px / page.dpi
+    height_in = height_px / page.dpi
+    min_dim = min(width_px, height_px)
+    radius = min_dim * 0.02
+
+    parts = [
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{width_in}in" height="{height_in}in" '
+        f'viewBox="0 0 {width_px} {height_px}">',
+        '<g id="pibooth-layout-guides">',
+    ]
+
+    for shape in page.shapes:
+        rect_x, rect_y, rect_w, rect_h = shape.rect_px(page.size)
+        if rect_w <= 0 or rect_h <= 0:
+            continue
+        cx = rect_x + rect_w / 2
+        cy = rect_y + rect_h / 2
+        # SVG's rotate(angle, cx, cy) is clockwise-positive in its y-down
+        # coordinate system, the same sense as our canonical `rotation`
+        # field, so (unlike the PIL rendering path, which must negate for
+        # PIL.Image.rotate's counter-clockwise convention) no sign flip.
+        transform = f' transform="rotate({shape.rotation} {cx} {cy})"' if shape.rotation else ""
+
+        if shape.kind == CAPTURE:
+            color = GUIDE_COLORS[(shape.index - 1) % len(GUIDE_COLORS)]
+            fill = "#{:02x}{:02x}{:02x}".format(*color)
+            parts.append(
+                f'<rect x="{rect_x}" y="{rect_y}" width="{rect_w}" height="{rect_h}" rx="{radius}" '
+                f'fill="{fill}" fill-opacity="0.45"{transform}/>'
+            )
+            parts.append(
+                f'<text x="{cx}" y="{cy}" font-family="sans-serif" font-weight="bold" fill="white" '
+                f'font-size="{rect_h * 0.5}" text-anchor="middle" dominant-baseline="central"{transform}>'
+                f"{escape(str(shape.index))}</text>"
+            )
+        elif shape.kind == TEXT:
+            parts.append(
+                f'<rect x="{rect_x}" y="{rect_y}" width="{rect_w}" height="{rect_h}" fill="none" '
+                f'stroke="#666666" stroke-width="2" stroke-dasharray="6,4"{transform}/>'
+            )
+            parts.append(
+                f'<text x="{cx}" y="{cy}" font-family="sans-serif" fill="#666666" '
+                f'font-size="{rect_h * 0.25}" text-anchor="middle" dominant-baseline="central"{transform}>'
+                f"{escape(f'Text {shape.index}')}</text>"
+            )
+        elif shape.kind == IMAGE:
+            label = osp.basename(shape.asset) if shape.asset else "image"
+            parts.append(
+                f'<rect x="{rect_x}" y="{rect_y}" width="{rect_w}" height="{rect_h}" fill="none" '
+                f'stroke="#969696" stroke-width="2"{transform}/>'
+            )
+            parts.append(
+                f'<text x="{cx}" y="{cy}" font-family="sans-serif" fill="#969696" '
+                f'font-size="{rect_h * 0.15}" text-anchor="middle" dominant-baseline="central"{transform}>'
+                f"{escape(label)}</text>"
+            )
+
+    parts.append("</g>")
+    parts.append("</svg>")
+    return "\n".join(parts)

@@ -23,6 +23,11 @@
  */
 "use strict";
 
+//: Muted slot palette shared by the layout designer (capture slot fill) and
+//: the overlay designer (layout guide layer drawn behind its elements) —
+//: mirrors GUIDE_COLORS in pibooth/pictures/template.py; keep both in sync.
+const SLOT_COLORS = ["#8fb8ae", "#c9a66b", "#a98fb8", "#6ba3c9"];
+
 const CanvasEditor = (function () {
   const HANDLE_SIZE = 9; // constant screen/view px, regardless of zoom
   const HANDLE_HIT_PAD = 3; // extra px tolerance around a handle for hit-testing
@@ -85,6 +90,9 @@ const CanvasEditor = (function () {
     const onSelect = options.onSelect || (() => {});
     const onChange = options.onChange || (() => {});
     const onDelete = options.onDelete || (() => {});
+    // Optional extra (non-selectable) snap targets, e.g. a layout guide
+    // layer: () => [{x, y, w, h}] in FRACTIONS of the canvas, top-left based.
+    const extraSnapRects = options.extraSnapRects || (() => []);
 
     const viewport = { scale: 1, offsetX: 0, offsetY: 0 };
     let selectedItem = null;
@@ -200,6 +208,18 @@ const CanvasEditor = (function () {
         const center = axis === "x" ? pr.cx : pr.cy;
         const size = axis === "x" ? pr.w : pr.h;
         candidates.push(center - size / 2, center, center + size / 2);
+      }
+      const size = canvasSize();
+      for (const rect of extraSnapRects()) {
+        if (axis === "x") {
+          const left = rect.x * size.width;
+          const width = rect.w * size.width;
+          candidates.push(left, left + width / 2, left + width);
+        } else {
+          const top = rect.y * size.height;
+          const height = rect.h * size.height;
+          candidates.push(top, top + height / 2, top + height);
+        }
       }
       return candidates;
     }

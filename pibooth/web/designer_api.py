@@ -17,7 +17,7 @@ from flask import Blueprint, Response, abort, current_app, jsonify, request, sen
 from pibooth import fonts
 from pibooth.utils import LOGGER
 from pibooth.web.designer import render_design
-from pibooth.web.templates_api import get_final_picture_size
+from pibooth.web.templates_api import get_final_picture_size, load_template_by_name
 
 designer_api = Blueprint("designer_api", __name__, url_prefix="/api")
 
@@ -73,6 +73,29 @@ def _canvas_size(cfg: Any, orientation: str) -> tuple[int, int]:
     width, height, _source = get_final_picture_size(cfg, variant=0)
     geometry_orientation = "portrait" if width < height else "landscape"
     if geometry_orientation != orientation:
+        width, height = height, width
+    return width, height
+
+
+def _template_canvas_size(cfg: Any, template_name: str, orientation: str) -> tuple[int, int]:
+    """Return the ``(width, height)`` canvas size a design should be
+    rendered at when it is being designed against a specific saved
+    template's layout guide (see the web overlay designer "Design for
+    layout" control), rather than the booth's live geometry.
+
+    The guide page is the template's page whose orientation matches
+    ``orientation``, or its first page otherwise; if that page's own
+    orientation still differs from ``orientation`` the dimensions are
+    swapped so the design still renders in its own orientation (mirrors
+    :func:`_canvas_size`).
+
+    :raises ValueError: if the template name is invalid, unknown, or cannot
+                         be parsed
+    """
+    template = load_template_by_name(cfg, template_name)
+    page = next((p for p in template.pages if p.orientation == orientation), template.pages[0])
+    width, height = page.size
+    if page.orientation != orientation:
         width, height = height, width
     return width, height
 
@@ -175,6 +198,7 @@ def create_design() -> Response:
     payload = request.get_json(silent=True) or {}
     spec = payload.get("spec")
     assign = bool(payload.get("assign", False))
+    template_name = str(payload.get("template") or "")
 
     try:
         name = _validate_spec(spec)
@@ -189,7 +213,14 @@ def create_design() -> Response:
 
     with pibooth["lock"]:
         try:
-            size = _canvas_size(cfg, spec["orientation"])
+            if template_name:
+                size = _template_canvas_size(cfg, template_name, spec["orientation"])
+            else:
+                size = _canvas_size(cfg, spec["orientation"])
+        except ValueError as ex:
+            abort(400, description=str(ex))
+
+        try:
             image = render_design(spec, assets_dir, size)
         except (OSError, ValueError) as ex:
             abort(400, description=f"Cannot render design: {ex}")
@@ -199,6 +230,8 @@ def create_design() -> Response:
         json_path = osp.join(designs_dir, f"{name}.json")
         image.save(png_path)
         stored_spec = {**spec, "name": name}
+        if template_name:
+            stored_spec["template"] = template_name
         with open(json_path, "w", encoding="utf-8") as fp:
             json.dump(stored_spec, fp, indent=2)
 

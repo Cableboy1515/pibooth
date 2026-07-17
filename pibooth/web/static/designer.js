@@ -4,7 +4,7 @@
 /* Register this page alongside the events page (see events.js). Both files
  * push into the same global CUSTOM_PAGES array read by app.js renderNav().
  */
-CUSTOM_PAGES.push({ id: "DESIGNER", label: "Overlay designer", icon: "🎨", render: renderDesignerPage });
+CUSTOM_PAGES.push({ id: "DESIGNER", label: "Overlay designer", icon: "🎨", render: renderDesignerPage, group: "design", order: 1 });
 
 const designerState = {
   loaded: false,
@@ -19,6 +19,10 @@ const designerState = {
   designs: [], // /api/designs payload cache
   geometry: { width: 800, height: 1200, orientation: "portrait", source: "default" },
   editor: null, // active CanvasEditor instance
+  template: "", // saved layout template name this design is being designed for ("" = booth geometry)
+  templates: [], // /api/templates payload cache, for the "Design for layout" select
+  showGuides: true, // layout guide layer visibility
+  guidePage: null, // resolved template page (see resolveGuidePage()) whose shapes draw as guides, or null
 };
 
 const DESIGNER_CANVAS_HEIGHT = 520;
@@ -32,21 +36,79 @@ function designerCanvasSize() {
   return { width, height };
 }
 
-async function fetchDesignerGeometry() {
-  try {
-    designerState.geometry = await api("/api/geometry?variant=0");
-  } catch (error) {
-    designerState.geometry = { width: 800, height: 1200, orientation: "portrait", source: "default" };
+function templatePageOrientation(page) {
+  return page.size[0] < page.size[1] ? "portrait" : "landscape";
+}
+
+/** Resolve the template page whose shapes are drawn as layout guides: the
+ * page matching `orientation`, or the template's first page otherwise (same
+ * rule as the backend, see pibooth.web.designer_api._template_canvas_size).
+ */
+function resolveGuidePage(templateData, orientation) {
+  if (!templateData || !Array.isArray(templateData.pages) || !templateData.pages.length) return null;
+  return templateData.pages.find((page) => templatePageOrientation(page) === orientation) || templateData.pages[0];
+}
+
+/** Refresh both the canvas geometry (size/aspect) and the guide layer.
+ *
+ * - A specific template selected ("Design for layout"): the canvas follows
+ *   that template's guide page size, and its shapes are drawn as guides.
+ * - Booth geometry (no template selected): the canvas follows the booth's
+ *   live final-picture geometry as before, but guides are still drawn from
+ *   the booth's currently ASSIGNED template, if any, so the default case
+ *   also shows the real layout.
+ */
+async function refreshDesignerGeometryAndGuides() {
+  const caption = $("designer-geometry-caption");
+
+  if (designerState.template) {
+    let guidePage = null;
+    try {
+      const data = await api(`/api/templates/${encodeURIComponent(designerState.template)}`);
+      guidePage = resolveGuidePage(data, designerState.orientation);
+    } catch (error) {
+      toast(`Could not load layout "${designerState.template}": ${error.message}`, "error");
+    }
+    designerState.guidePage = guidePage;
+    if (guidePage) {
+      designerState.geometry = {
+        width: guidePage.size[0],
+        height: guidePage.size[1],
+        orientation: templatePageOrientation(guidePage),
+        source: "template",
+      };
+    }
+    if (caption) {
+      const g = designerState.geometry;
+      caption.textContent = `Layout: ${g.width}x${g.height}px (${designerState.template})`;
+    }
+  } else {
+    try {
+      designerState.geometry = await api("/api/geometry?variant=0");
+    } catch (error) {
+      designerState.geometry = { width: 800, height: 1200, orientation: "portrait", source: "default" };
+    }
+    if (caption) {
+      const g = designerState.geometry;
+      caption.textContent = `Layout: ${g.width}x${g.height}px (${g.source})`;
+    }
+
+    designerState.guidePage = null;
+    try {
+      const list = await api("/api/templates");
+      if (list.active) {
+        const data = await api(`/api/templates/${encodeURIComponent(list.active)}`);
+        designerState.guidePage = resolveGuidePage(data, designerState.orientation);
+      }
+    } catch (error) {
+      designerState.guidePage = null;
+    }
   }
+
   const canvas = $("designer-canvas");
   if (canvas) {
     resizeCanvas(canvas);
     redraw();
-  }
-  const caption = $("designer-geometry-caption");
-  if (caption) {
-    const g = designerState.geometry;
-    caption.textContent = `Layout: ${g.width}x${g.height}px (${g.source})`;
   }
 }
 
@@ -177,12 +239,64 @@ function drawElement(ctx, element, canvasSize) {
   ctx.restore();
 }
 
-/** CanvasEditor draw() callback: paint the sample backdrop then every element,
- * in canvas-logical pixel space (the editor has already applied the zoom/pan
- * transform and cleared the canvas by the time this runs).
+/** Draw one guide shape (a template capture/text/image slot), same visual
+ * language as the layout designer's own drawLayoutShape() (layout.js) minus
+ * the actual asset preview for image slots (a plain outline is enough here:
+ * these are read-only guides, not editable shapes).
+ */
+function drawGuideShape(ctx, shape, size) {
+  const x = shape.x * size.width;
+  const y = shape.y * size.height;
+  const w = Math.max(1, shape.width * size.width);
+  const h = Math.max(1, shape.height * size.height);
+  ctx.save();
+  ctx.translate(x + w / 2, y + h / 2);
+  ctx.rotate(((shape.rotation || 0) * Math.PI) / 180);
+
+  if (shape.type === "capture") {
+    ctx.fillStyle = SLOT_COLORS[(shape.index - 1) % SLOT_COLORS.length];
+    ctx.globalAlpha = 0.45;
+    ctx.beginPath();
+    ctx.roundRect(-w / 2, -h / 2, w, h, Math.min(w, h) * 0.06);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = "#ffffff";
+    ctx.font = `700 ${Math.max(10, Math.min(w, h) * 0.3)}px sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(String(shape.index), 0, 0);
+  } else if (shape.type === "text") {
+    ctx.strokeStyle = "#8a9490";
+    ctx.setLineDash([5, 4]);
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(-w / 2, -h / 2, w, h);
+    ctx.setLineDash([]);
+    ctx.fillStyle = "#8a9490";
+    ctx.font = `${Math.max(10, Math.min(w, h) * 0.4)}px sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(`Text ${shape.index}`, 0, 0);
+  } else if (shape.type === "image") {
+    ctx.strokeStyle = "#bbbbbb";
+    ctx.lineWidth = 1;
+    ctx.strokeRect(-w / 2, -h / 2, w, h);
+  }
+  ctx.restore();
+}
+
+function drawGuideLayer(ctx, size) {
+  if (!designerState.showGuides || !designerState.guidePage) return;
+  for (const shape of designerState.guidePage.shapes) drawGuideShape(ctx, shape, size);
+}
+
+/** CanvasEditor draw() callback: paint the layout guides, the sample
+ * backdrop, then every element, in canvas-logical pixel space (the editor
+ * has already applied the zoom/pan transform and cleared the canvas by the
+ * time this runs).
  */
 function drawScene(ctx) {
   const size = designerCanvasSize();
+  drawGuideLayer(ctx, size);
   if (designerState.showSample && designerState.sampleImage && designerState.sampleImage.complete) {
     ctx.save();
     ctx.globalAlpha = 0.6;
@@ -476,6 +590,35 @@ function resizeCanvas(canvas) {
   canvas.style.aspectRatio = `${size.width} / ${size.height}`;
 }
 
+/** "Design for layout" select: designs the overlay against a specific saved
+ * template's guide page instead of the booth's live geometry (see Feature 1,
+ * the guide layer drawn by drawGuideLayer()).
+ */
+function buildDesignForLayoutSelect() {
+  const select = el("select");
+
+  function populate() {
+    select.replaceChildren(el("option", { value: "" }, "Booth geometry (assigned layout)"));
+    for (const t of designerState.templates) select.append(el("option", { value: t.name }, t.name));
+    select.value = designerState.templates.some((t) => t.name === designerState.template) ? designerState.template : "";
+  }
+
+  populate();
+  api("/api/templates")
+    .then((payload) => {
+      designerState.templates = payload.templates;
+      populate();
+    })
+    .catch(() => {});
+
+  select.onchange = () => {
+    designerState.template = select.value;
+    refreshDesignerGeometryAndGuides();
+  };
+
+  return field("Design for layout", select);
+}
+
 function buildToolbar() {
   const nameInput = el("input", { type: "text", placeholder: "e.g. gold-frame" });
   nameInput.value = designerState.name;
@@ -486,11 +629,13 @@ function buildToolbar() {
   orientationSelect.value = designerState.orientation;
   orientationSelect.onchange = () => {
     designerState.orientation = orientationSelect.value;
+    refreshDesignerGeometryAndGuides();
   };
 
   return el(
     "div",
     { class: "designer-toolbar" },
+    buildDesignForLayoutSelect(),
     field("Design name", nameInput),
     field("Orientation", orientationSelect)
   );
@@ -524,6 +669,8 @@ function resetDesignerState() {
   designerState.orientation = "portrait";
   designerState.elements = [];
   designerState.selected = -1;
+  designerState.template = "";
+  designerState.guidePage = null;
 }
 
 async function loadDesignIntoEditor(name) {
@@ -533,6 +680,7 @@ async function loadDesignIntoEditor(name) {
     designerState.orientation = spec.orientation === "landscape" ? "landscape" : "portrait";
     designerState.elements = Array.isArray(spec.elements) ? spec.elements : [];
     designerState.selected = -1;
+    designerState.template = spec.template || "";
     renderDesignerPage();
     toast(`Loaded design "${designerState.name}"`);
   } catch (error) {
@@ -568,16 +716,28 @@ function buildSaveRow() {
       orientation: designerState.orientation,
       elements: designerState.elements,
     };
+    const payload = { spec, assign: assignCheckbox.checked };
+    if (designerState.template) payload.template = designerState.template;
     try {
       await api("/api/designs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ spec, assign: assignCheckbox.checked }),
+        body: JSON.stringify(payload),
       });
       if (assignCheckbox.checked) {
         toast("Design saved and set as overlay — check the Picture page preview ✔");
       } else {
         toast("Design saved ✔");
+      }
+      if (designerState.template) {
+        try {
+          const list = await api("/api/templates");
+          if (list.active !== designerState.template) {
+            toast("Tip: this layout isn't assigned to the booth yet — assign it in the Layout designer", "warn", 6000);
+          }
+        } catch (error) {
+          /* best-effort hint only */
+        }
       }
     } catch (error) {
       toast(`Could not save design: ${error.message}`, "error");
@@ -612,6 +772,16 @@ function buildSampleToggle() {
   return el("label", { class: "row" }, checkbox, "Show sample picture");
 }
 
+function buildGuideToggle() {
+  const checkbox = el("input", { type: "checkbox" });
+  checkbox.checked = designerState.showGuides;
+  checkbox.onchange = () => {
+    designerState.showGuides = checkbox.checked;
+    redraw();
+  };
+  return el("label", { class: "row" }, checkbox, "Show layout guides");
+}
+
 function buildZoomControls() {
   const zoomOut = el("button", { class: "btn small ghost", title: "Zoom out" }, "−");
   zoomOut.onclick = () => designerState.editor && designerState.editor.setZoom(designerState.editor.viewport.scale / 1.25);
@@ -631,7 +801,8 @@ function renderDesignerPage() {
     { class: "designer-canvas-wrap" },
     el("div", { class: "designer-canvas-stack" }, el("canvas", { id: "designer-canvas" }), buildZoomControls()),
     el("div", { class: "designer-caption", id: "designer-geometry-caption" }, "Layout: …"),
-    buildSampleToggle()
+    buildSampleToggle(),
+    buildGuideToggle()
   );
 
   const controls = el(
@@ -662,6 +833,12 @@ function renderDesignerPage() {
     onChange: () => renderPropertiesPanel(),
     onDelete: (item) => deleteElement(designerState.elements.indexOf(item)),
     aspectLocked: (item) => !!item && item.type === "image",
+    extraSnapRects: () => {
+      if (!designerState.showGuides || !designerState.guidePage) return [];
+      return designerState.guidePage.shapes
+        .filter((shape) => shape.type === "capture" || shape.type === "text")
+        .map((shape) => ({ x: shape.x, y: shape.y, w: shape.width, h: shape.height }));
+    },
   });
   registerPageCleanup(() => designerState.editor && designerState.editor.destroy());
 
@@ -669,5 +846,5 @@ function renderDesignerPage() {
 
   renderElementList();
   renderPropertiesPanel();
-  fetchDesignerGeometry();
+  refreshDesignerGeometryAndGuides();
 }

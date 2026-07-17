@@ -6,13 +6,22 @@ import os.path as osp
 import string
 import tempfile
 from datetime import datetime
+from io import BytesIO
 from typing import Any
 
-from flask import Blueprint, Response, abort, current_app, jsonify, request
+from flask import Blueprint, Response, abort, current_app, jsonify, request, send_file
 from werkzeug.utils import secure_filename
 
 from pibooth.pictures import AUTO, LANDSCAPE, PORTRAIT
-from pibooth.pictures.template import Template, load_template, parse_mxgraph, template_from_dict
+from pibooth.pictures.template import (
+    Template,
+    TemplatePage,
+    load_template,
+    parse_mxgraph,
+    render_layout_guide,
+    render_layout_guide_svg,
+    template_from_dict,
+)
 from pibooth.utils import LOGGER
 
 templates_api = Blueprint("templates_api", __name__, url_prefix="/api")
@@ -52,6 +61,19 @@ def _template_paths(cfg: Any, name: str) -> tuple[str, str]:
 def _active_name(cfg: Any) -> str:
     path = cfg.getpath("PICTURE", "template")
     return osp.splitext(osp.basename(path))[0] if path else ""
+
+
+def load_template_by_name(cfg: Any, name: str) -> Template:
+    """Load a saved template by its (sanitized) name.
+
+    :raises ValueError: if the name is invalid once sanitized, no such
+                         template exists, or the template file cannot be
+                         parsed
+    """
+    name, json_path = _template_paths(cfg, name)
+    if not osp.isfile(json_path):
+        raise ValueError(f"Template '{name}' not found")
+    return load_template(json_path)
 
 
 def get_final_picture_size(cfg: Any, variant: int) -> tuple[int, int, str]:
@@ -271,3 +293,64 @@ def get_geometry() -> Response:
     width, height, source = get_final_picture_size(cfg, variant)
     orientation = PORTRAIT if width < height else LANDSCAPE
     return jsonify({"width": width, "height": height, "orientation": orientation, "source": source})
+
+
+def _guide_page(name: str) -> tuple[str, TemplatePage]:
+    """Resolve (sanitized name, page) for a guide export request, aborting
+    with the appropriate status code (404 unknown template, 400 bad request
+    params or unknown page) on failure.
+    """
+    cfg = _pibooth()["cfg"]
+    try:
+        name, json_path = _template_paths(cfg, name)
+    except ValueError as ex:
+        abort(400, description=str(ex))
+    if not osp.isfile(json_path):
+        abort(404, description=f"Template '{name}' not found")
+
+    try:
+        template = load_template(json_path)
+    except ValueError as ex:
+        abort(400, description=str(ex))
+
+    try:
+        captures = int(request.args.get("captures", ""))
+    except ValueError:
+        abort(400, description="'captures' query parameter must be an integer")
+
+    orientation = request.args.get("orientation", "")
+    if orientation not in (PORTRAIT, LANDSCAPE):
+        abort(400, description="'orientation' query parameter must be 'portrait' or 'landscape'")
+
+    try:
+        page = template.get_page(captures, orientation)
+    except ValueError:
+        available = ", ".join(f"{p.captures} captures/{p.orientation}" for p in template.pages)
+        abort(
+            400,
+            description=(
+                f"No page for {captures} captures in '{orientation}' orientation. Available pages: {available}"
+            ),
+        )
+    return name, page
+
+
+@templates_api.route("/templates/<name>/guide.svg", methods=["GET"])
+def get_template_guide_svg(name: str) -> Response:
+    name, page = _guide_page(name)
+    svg = render_layout_guide_svg(page)
+    filename = f"{name}-{page.captures}-{page.orientation}-guide.svg"
+    response = Response(svg, mimetype="image/svg+xml")
+    response.headers["Content-Disposition"] = f'attachment; filename="{filename}"'
+    return response
+
+
+@templates_api.route("/templates/<name>/guide.png", methods=["GET"])
+def get_template_guide_png(name: str) -> Response:
+    name, page = _guide_page(name)
+    image = render_layout_guide(page)
+    buffer = BytesIO()
+    image.save(buffer, format="PNG")
+    buffer.seek(0)
+    filename = f"{name}-{page.captures}-{page.orientation}-guide.png"
+    return send_file(buffer, mimetype="image/png", as_attachment=True, download_name=filename)

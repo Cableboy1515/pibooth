@@ -4,7 +4,7 @@
 /* Pushed into the same global CUSTOM_PAGES array read by app.js renderNav()
  * (see events.js for the array declaration).
  */
-CUSTOM_PAGES.push({ id: "UPLOADS", label: "Uploads", icon: "☁️", render: renderUploadsPage });
+CUSTOM_PAGES.push({ id: "UPLOADS", label: "Uploads", icon: "☁️", render: renderUploadsPage, group: "event", order: 1 });
 
 const uploadsState = {
   loaded: false,

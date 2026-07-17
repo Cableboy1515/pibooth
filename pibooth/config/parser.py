@@ -11,6 +11,7 @@ from configparser import RawConfigParser
 from typing import Any
 
 from pibooth import language
+from pibooth.printer import PAPER_FORMATS
 from pibooth.utils import LOGGER, open_text_editor
 
 
@@ -223,6 +224,25 @@ DEFAULT: "dict[str, dict[str, tuple[Any, str, str | None, Any]]]" = {
     "PRINTER": {
         "printer_name": ("default", "Name of the printer defined in CUPS (or use the 'default' one)", None, None),
         "printer_options": ({}, "Print options passed to the printer, shall be a valid Python dictionary", None, None),
+        "paper_size": (
+            "auto",
+            "Paper size sent to the printer: 'auto' (follow the picture layout), "
+            "'default' (let the printer decide) or a size like '4x6'",
+            "Paper size",
+            ["auto", "default"] + sorted(PAPER_FORMATS),
+        ),
+        "quality": (
+            "default",
+            "Print quality: 'default', 'draft', 'normal' or 'high'",
+            "Print quality",
+            ["default", "draft", "normal", "high"],
+        ),
+        "tray": (
+            "default",
+            "Printer input tray (media source), 'default' lets the printer decide",
+            None,
+            None,
+        ),
         "printer_delay": (
             10,
             "How long is the print view in seconds (0 to skip it)",

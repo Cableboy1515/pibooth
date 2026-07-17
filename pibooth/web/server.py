@@ -21,6 +21,7 @@ import pibooth
 from pibooth import fonts
 from pibooth.config.parser import DEFAULT, PiConfigParser
 from pibooth.pictures import get_picture_factory
+from pibooth.printer import QUALITY_LEVELS, parse_pwg_media
 from pibooth.utils import LOGGER
 from pibooth.web import CONFIG_CHANGED
 from pibooth.web.designer_api import designer_api
@@ -64,6 +65,10 @@ def _option_kind(section: str, name: str, default: Any, choices: Any) -> str:
         return "captures"
     if key == ("PRINTER", "printer_name"):
         return "printer"
+    if key == ("PRINTER", "paper_size"):
+        return "paper"
+    if key == ("PRINTER", "tray"):
+        return "tray"
     if key in IMAGE_OPTIONS:
         return "image"
     if key in COLOR_OR_IMAGE_OPTIONS:
@@ -100,6 +105,37 @@ def _split_help(description: str) -> tuple[str, str | None]:
         else:
             lines.append(line.lstrip("# "))
     return " ".join(lines), plugin
+
+
+def _resolve_cups_printer_name(conn: Any, name: str) -> str | None:
+    """Return the actual CUPS printer name for ``name``, mirroring the
+    resolution logic of :py:class:`pibooth.printer.Printer`: ``"default"``
+    (or empty) resolves to the CUPS default printer, or the first configured
+    printer if there is no default; any other value must match an existing
+    CUPS printer name.
+    """
+    if not name or name.lower() == "default":
+        resolved = conn.getDefault()
+        if not resolved and conn.getPrinters():
+            resolved = next(iter(conn.getPrinters()))
+        return resolved
+    if name in conn.getPrinters():
+        return name
+    return None
+
+
+def _format_media_label(name: str) -> str:
+    """Return a friendly label for a PWG media name, e.g. ``4x6"``, falling
+    back to the raw name when its size cannot be parsed.
+    """
+    parsed = parse_pwg_media(name)
+    if parsed is None:
+        return name
+
+    def _fmt(value: float) -> str:
+        return f"{value:.2f}".rstrip("0").rstrip(".")
+
+    return f'{_fmt(parsed[0])}x{_fmt(parsed[1])}"'
 
 
 def get_local_ip() -> str:
@@ -287,6 +323,74 @@ def create_app(cfg: PiConfigParser, plugin_manager: Any, application: "PiApplica
         except RuntimeError as ex:
             LOGGER.warning("Cannot connect to CUPS server: %s", ex)
             return jsonify({"available": False, "printers": [], "default": None})
+
+    @app.route("/api/printers/<name>/capabilities", methods=["GET"])
+    def get_printer_capabilities(name: str) -> Response:
+        empty: dict[str, Any] = {
+            "available": False,
+            "model": None,
+            "state_message": None,
+            "media": [],
+            "media_default": None,
+            "quality": [],
+            "quality_default": None,
+            "trays": [],
+            "tray_default": None,
+        }
+        try:
+            import cups
+        except ImportError:
+            return jsonify(empty)
+        try:
+            conn = cups.Connection()
+            resolved = _resolve_cups_printer_name(conn, name)
+            if not resolved:
+                return jsonify(empty)
+            attrs = conn.getPrinterAttributes(
+                resolved,
+                requested_attributes=[
+                    "media-supported",
+                    "media-default",
+                    "print-quality-supported",
+                    "print-quality-default",
+                    "media-source-supported",
+                    "media-source-default",
+                    "printer-make-and-model",
+                    "printer-state-message",
+                ],
+            )
+        except (RuntimeError, cups.IPPError) as ex:
+            LOGGER.warning("Cannot get capabilities of printer '%s': %s", name, ex)
+            return jsonify(empty)
+
+        media_supported = attrs.get("media-supported") or []
+        quality_supported = attrs.get("print-quality-supported") or []
+        quality_reverse = {value: level for level, value in QUALITY_LEVELS.items()}
+
+        return jsonify(
+            {
+                "available": True,
+                "model": attrs.get("printer-make-and-model"),
+                "state_message": attrs.get("printer-state-message"),
+                "media": [
+                    {
+                        "name": media_name,
+                        "inches": list(parsed) if (parsed := parse_pwg_media(media_name)) else None,
+                        "label": _format_media_label(media_name),
+                    }
+                    for media_name in media_supported
+                ],
+                "media_default": attrs.get("media-default"),
+                "quality": [
+                    {"value": value, "label": quality_reverse[value]}
+                    for value in quality_supported
+                    if value in quality_reverse
+                ],
+                "quality_default": attrs.get("print-quality-default"),
+                "trays": attrs.get("media-source-supported") or [],
+                "tray_default": attrs.get("media-source-default"),
+            }
+        )
 
     @app.route("/api/fonts", methods=["GET"])
     def get_fonts() -> Response:

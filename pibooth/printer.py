@@ -7,6 +7,7 @@ except ImportError:
     cups = None  # CUPS is optional
 
 import os.path as osp
+import re
 import tempfile
 from typing import TYPE_CHECKING, Any
 
@@ -30,6 +31,58 @@ PAPER_FORMATS = {
     "6x9": (6, 9),  # 6x9 pouces - 15x23 cm - 152x229 mm
 }
 
+#: IPP print-quality enum values (RFC 8011 §5.4.13 / PWG 5100.13)
+QUALITY_LEVELS = {"draft": 3, "normal": 4, "high": 5}
+
+#: A PWG 5101.1 self-describing media name looks like ``class_sizename_WxHunit``,
+#: e.g. ``na_index-4x6_4x6in`` or ``om_small-photo_100x148mm``. The trailing
+#: ``WxHunit`` chunk is what's parsed here; the ``class`` and ``sizename``
+#: parts are informative only. ``custom_min_...`` / ``custom_max_...`` ranges
+#: have no fixed size and are intentionally left unparsed (return None).
+_PWG_SIZE_RE = re.compile(r"_(\d+(?:\.\d+)?)x(\d+(?:\.\d+)?)(in|mm)$")
+
+
+def parse_pwg_media(name: str) -> tuple[float, float] | None:
+    """Parse a PWG self-describing media name into a portrait-normalized
+    ``(width_in, height_in)`` size in inches.
+
+    :param name: PWG media name, e.g. ``"na_index-4x6_4x6in"``
+
+    :return: ``(width_in, height_in)`` with the smaller dimension first,
+             or ``None`` if the name cannot be parsed (custom ranges, ...)
+    """
+    if name.startswith("custom_"):
+        # e.g. 'custom_max_8.5x14in': a range bound, not a selectable size
+        return None
+    match = _PWG_SIZE_RE.search(name)
+    if not match:
+        return None
+    width, height, unit = float(match.group(1)), float(match.group(2)), match.group(3)
+    if unit == "mm":
+        width /= 25.4
+        height /= 25.4
+    return (width, height) if width <= height else (height, width)
+
+
+def match_media(target_inches: tuple[float, float], supported: list[str]) -> str | None:
+    """Return the first PWG media name in ``supported`` whose parsed size
+    matches ``target_inches`` within 0.08 inch (~2 mm) per dimension.
+
+    :param target_inches: ``(width, height)`` in inches, any orientation
+    :param supported: list of PWG media names (as returned by CUPS)
+
+    :return: the matching PWG media name, or ``None`` if nothing matches
+    """
+    width, height = target_inches
+    target = (width, height) if width <= height else (height, width)
+    for name in supported:
+        parsed = parse_pwg_media(name)
+        if parsed is None:
+            continue
+        if abs(parsed[0] - target[0]) <= 0.08 and abs(parsed[1] - target[1]) <= 0.08:
+            return name
+    return None
+
 
 class Printer:
     def __init__(
@@ -46,6 +99,7 @@ class Printer:
         # May come from config as any parsed type, normalized to a dict below
         self.options: Any = options
         self.count = counters
+        self._capabilities: dict[str, Any] | None = None
         if not cups:
             LOGGER.warning("No printer found (pycups or pycups-notify not installed)")
             return  # CUPS is not installed
@@ -91,8 +145,61 @@ class Printer:
             return True
         return self.count.printed < self.max_pages
 
-    def print_file(self, filename: str, copies: int = 1) -> None:
-        """Send a file to the CUPS server to the default printer."""
+    def get_capabilities(self) -> dict[str, Any]:
+        """Return the printer's IPP capabilities: supported/default media,
+        print quality levels, input trays, make/model and state message.
+
+        Cached on first successful call (a new :class:`Printer` instance is
+        created whenever the configuration changes, so there is no need to
+        invalidate the cache).
+
+        :return: dict with keys ``media``, ``media_default``, ``quality``,
+                 ``quality_default``, ``trays``, ``tray_default``, ``model``,
+                 ``state_message``; empty dict if capabilities are unavailable
+        """
+        if self._capabilities is not None:
+            return self._capabilities
+        if not cups or not self.name or not self._conn:
+            return {}
+        try:
+            attrs = self._conn.getPrinterAttributes(
+                self.name,
+                requested_attributes=[
+                    "media-supported",
+                    "media-default",
+                    "print-quality-supported",
+                    "print-quality-default",
+                    "media-source-supported",
+                    "media-source-default",
+                    "printer-make-and-model",
+                    "printer-state-message",
+                ],
+            )
+        except (cups.IPPError, RuntimeError) as ex:
+            LOGGER.warning("Cannot get capabilities of printer '%s': %s", self.name, ex)
+            return {}
+
+        capabilities = {
+            "media": attrs.get("media-supported", []),
+            "media_default": attrs.get("media-default"),
+            "quality": attrs.get("print-quality-supported", []),
+            "quality_default": attrs.get("print-quality-default"),
+            "trays": attrs.get("media-source-supported", []),
+            "tray_default": attrs.get("media-source-default"),
+            "model": attrs.get("printer-make-and-model"),
+            "state_message": attrs.get("printer-state-message"),
+        }
+        self._capabilities = capabilities
+        return capabilities
+
+    def print_file(self, filename: str, copies: int = 1, options: dict[str, str] | None = None) -> None:
+        """Send a file to the CUPS server to the default printer.
+
+        :param filename: path of the picture file to print
+        :param copies: number of copies of the picture to render on the same page
+        :param options: extra CUPS job options merged over :attr:`options`
+                         for this job only (``self.options`` is left untouched)
+        """
         if not self.name or not self._conn:
             raise OSError("No printer found (check config file or CUPS config)")
         if not osp.isfile(filename):
@@ -109,6 +216,8 @@ class Printer:
                 ],
             )
 
+        job_options = {**self.options, **options} if options else self.options
+
         if copies > 1:
             with tempfile.NamedTemporaryFile(suffix=osp.basename(filename)) as fp:
                 picture = Image.open(filename)
@@ -117,10 +226,10 @@ class Printer:
                 # are the one necessary to render several pictures on same page.
                 factory.set_margin(2)
                 factory.save(fp.name)
-                self._conn.printFile(self.name, fp.name, osp.basename(filename), self.options)
+                self._conn.printFile(self.name, fp.name, osp.basename(filename), job_options)
         else:
-            self._conn.printFile(self.name, filename, osp.basename(filename), self.options)
-        LOGGER.debug("File '%s' sent to the printer with options %s", filename, self.options)
+            self._conn.printFile(self.name, filename, osp.basename(filename), job_options)
+        LOGGER.debug("File '%s' sent to the printer with options %s", filename, job_options)
 
     def cancel_all_tasks(self) -> None:
         """Cancel all tasks in the queue."""

@@ -1,5 +1,7 @@
 import io
 import os.path as osp
+import sys
+import types
 
 import pytest
 from PIL import Image
@@ -48,6 +50,14 @@ def test_get_config_schema(client):
     window_options = {opt["name"]: opt for opt in sections["WINDOW"]["options"]}
     assert window_options["text_color"]["kind"] == "color"
     assert window_options["flash"]["kind"] == "bool"
+
+    printer_options = {opt["name"]: opt for opt in sections["PRINTER"]["options"]}
+    assert printer_options["printer_name"]["kind"] == "printer"
+    assert printer_options["paper_size"]["kind"] == "paper"
+    assert "auto" in printer_options["paper_size"]["choices"]
+    assert "4x6" in printer_options["paper_size"]["choices"]
+    assert printer_options["quality"]["kind"] == "choice"
+    assert printer_options["tray"]["kind"] == "tray"
 
 
 def test_put_config_saves_values(client, web_cfg):
@@ -118,6 +128,75 @@ def test_printers_endpoint(client):
     payload = client.get("/api/printers").get_json()
     assert "available" in payload
     assert isinstance(payload["printers"], list)
+
+
+def test_printer_capabilities_unavailable_without_cups(client):
+    # No pycups installed in the venv: the endpoint degrades gracefully
+    payload = client.get("/api/printers/default/capabilities").get_json()
+    assert payload["available"] is False
+    assert payload["media"] == []
+    assert payload["trays"] == []
+
+
+class _FakeIPPError(Exception):
+    pass
+
+
+class _FakeCupsConnection:
+    def __init__(self, attrs):
+        self._attrs = attrs
+
+    def getDefault(self):
+        return "MyPrinter"
+
+    def getPrinters(self):
+        return {"MyPrinter": {}}
+
+    def getPrinterAttributes(self, name, requested_attributes=None):
+        return self._attrs
+
+
+def test_printer_capabilities_parsed(client, monkeypatch):
+    attrs = {
+        "media-supported": ["na_index-4x6_4x6in", "om_2x6_2x6in"],
+        "media-default": "na_index-4x6_4x6in",
+        "print-quality-supported": [3, 4, 5],
+        "print-quality-default": 4,
+        "media-source-supported": ["main", "photo"],
+        "media-source-default": "main",
+        "printer-make-and-model": "Canon SELPHY CP1300",
+        "printer-state-message": "",
+    }
+    fake_cups = types.ModuleType("cups")
+    fake_cups.IPPError = _FakeIPPError
+    fake_cups.Connection = lambda: _FakeCupsConnection(attrs)
+    monkeypatch.setitem(sys.modules, "cups", fake_cups)
+
+    payload = client.get("/api/printers/default/capabilities").get_json()
+    assert payload["available"] is True
+    assert payload["model"] == "Canon SELPHY CP1300"
+    media_by_name = {entry["name"]: entry for entry in payload["media"]}
+    assert media_by_name["na_index-4x6_4x6in"]["inches"] == [4.0, 6.0]
+    assert media_by_name["na_index-4x6_4x6in"]["label"] == '4x6"'
+    assert media_by_name["om_2x6_2x6in"]["label"] == '2x6"'
+    assert payload["media_default"] == "na_index-4x6_4x6in"
+    assert {"value": 3, "label": "draft"} in payload["quality"]
+    assert {"value": 4, "label": "normal"} in payload["quality"]
+    assert {"value": 5, "label": "high"} in payload["quality"]
+    assert payload["quality_default"] == 4
+    assert payload["trays"] == ["main", "photo"]
+    assert payload["tray_default"] == "main"
+
+
+def test_printer_capabilities_unknown_printer(client, monkeypatch):
+    fake_cups = types.ModuleType("cups")
+    fake_cups.IPPError = _FakeIPPError
+    fake_cups.Connection = lambda: _FakeCupsConnection({})
+    monkeypatch.setitem(sys.modules, "cups", fake_cups)
+
+    # getDefault/getPrinters don't know "NoSuchPrinter"
+    payload = client.get("/api/printers/NoSuchPrinter/capabilities").get_json()
+    assert payload["available"] is False
 
 
 def test_index_served(client):

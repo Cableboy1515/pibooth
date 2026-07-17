@@ -5,11 +5,24 @@ const state = {
   schema: null, // /api/config payload
   status: null, // /api/status payload
   printers: null, // /api/printers payload
+  printerCaps: null, // /api/printers/<name>/capabilities payload, refreshed per PRINTER section render
+  printerCapsFor: null, // printer name the current printerCaps was fetched for
   assets: [], // /api/assets payload
   dirty: {}, // {SECTION: {option: rawConfigString}}
   active: null, // active section name
   previewVariant: 0,
   assetCallback: null, // callback of the currently open asset picker
+};
+
+//: Same inches as pibooth.printer.PAPER_FORMATS, duplicated here so the
+//: frontend can annotate paper size choices without an extra round-trip.
+const PAPER_FORMATS_INCHES = {
+  "2x6": [2, 6],
+  "3,5x5": [3.5, 5],
+  "4x6": [4, 6],
+  "5x7": [5, 7],
+  "6x8": [6, 8],
+  "6x9": [6, 9],
 };
 
 const SECTION_ICONS = {
@@ -98,6 +111,31 @@ function parseCaptures(value) {
 
 function basename(path) {
   return (path || "").split(/[\\/]/).pop();
+}
+
+// Mirrors pibooth.printer.parse_pwg_media: parses the trailing "WxHunit"
+// chunk of a PWG self-describing media name, portrait-normalized.
+function parsePwgMedia(name) {
+  if ((name || "").startsWith("custom_")) return null; // range bound, not a size
+  const match = /_(\d+(?:\.\d+)?)x(\d+(?:\.\d+)?)(in|mm)$/.exec(name || "");
+  if (!match) return null;
+  let width = Number(match[1]);
+  let height = Number(match[2]);
+  if (match[3] === "mm") {
+    width /= 25.4;
+    height /= 25.4;
+  }
+  return width <= height ? [width, height] : [height, width];
+}
+
+function paperSizeSupported(paperKey, caps) {
+  const target = PAPER_FORMATS_INCHES[paperKey];
+  if (!target || !caps || !caps.available) return false;
+  const [targetWidth, targetHeight] = target[0] <= target[1] ? target : [target[1], target[0]];
+  return (caps.media || []).some((entry) => {
+    const parsed = entry.inches || parsePwgMedia(entry.name);
+    return parsed && Math.abs(parsed[0] - targetWidth) <= 0.08 && Math.abs(parsed[1] - targetHeight) <= 0.08;
+  });
 }
 
 /* ---------------------------------------------------------- dirty tracking */
@@ -368,6 +406,33 @@ function widgetPrinter(section, opt) {
   return container;
 }
 
+function widgetPaper(section, opt) {
+  const select = el("select");
+  const choices = [...opt.choices];
+  if (!choices.includes(opt.value)) choices.unshift(opt.value);
+  for (const choice of choices) {
+    const supported = choice !== "auto" && choice !== "default" && paperSizeSupported(choice, state.printerCaps);
+    select.append(el("option", { value: choice }, supported ? `${choice} ✓` : choice));
+  }
+  select.value = opt.value;
+  select.onchange = () => change(section, opt, select.value);
+  return select;
+}
+
+function widgetTray(section, opt) {
+  const caps = state.printerCaps;
+  if (!caps || !caps.available || !caps.trays || !caps.trays.length) {
+    return widgetText(section, opt);
+  }
+  const select = el("select");
+  const choices = ["default", ...caps.trays];
+  if (!choices.includes(opt.value)) choices.unshift(opt.value);
+  for (const choice of choices) select.append(el("option", { value: choice }, choice));
+  select.value = opt.value;
+  select.onchange = () => change(section, opt, select.value);
+  return select;
+}
+
 function widgetFor(section, opt) {
   switch (opt.kind) {
     case "bool":
@@ -389,6 +454,10 @@ function widgetFor(section, opt) {
       return widgetCaptures(section, opt);
     case "printer":
       return widgetPrinter(section, opt);
+    case "paper":
+      return widgetPaper(section, opt);
+    case "tray":
+      return widgetTray(section, opt);
     default:
       return widgetText(section, opt);
   }
@@ -397,6 +466,42 @@ function widgetFor(section, opt) {
 /* ---------------------------------------------------------------- preview */
 
 let previewTabsNode = null;
+
+function currentPrinterName() {
+  const dirtyValue = state.dirty.PRINTER && state.dirty.PRINTER.printer_name;
+  if (dirtyValue !== undefined) return dirtyValue.replace(/^"|"$/g, "");
+  const section = state.schema.sections.find((s) => s.name === "PRINTER");
+  const opt = section && section.options.find((o) => o.name === "printer_name");
+  return opt ? opt.value : "default";
+}
+
+function fetchPrinterCapabilities(printerName) {
+  api(`/api/printers/${encodeURIComponent(printerName)}/capabilities`)
+    .then((payload) => {
+      state.printerCaps = payload;
+      if (state.active === "PRINTER") renderSection("PRINTER");
+    })
+    .catch(() => {
+      state.printerCaps = { available: false };
+      if (state.active === "PRINTER") renderSection("PRINTER");
+    });
+}
+
+function buildPrinterCapsCard() {
+  const caps = state.printerCaps;
+  if (!caps || !caps.available) return null;
+  const sizes =
+    caps.media
+      .filter((entry) => entry.inches || parsePwgMedia(entry.name))
+      .map((entry) => entry.label)
+      .join(", ") || "none reported";
+  return el(
+    "div",
+    { class: "preview-card" },
+    el("div", {}, `${caps.model || "Unknown model"} — ${caps.state_message || "ready"}`),
+    el("div", {}, `Supported paper sizes: ${sizes}`)
+  );
+}
 
 function currentCapturesValue() {
   const dirtyValue = state.dirty.PICTURE && state.dirty.PICTURE.captures;
@@ -608,6 +713,15 @@ function renderSection(name) {
         el("div", {}, `Currently running camera backend: ${state.status.camera.detected}`)
       )
     );
+  }
+  if (name === "PRINTER") {
+    const printerName = currentPrinterName();
+    if (state.printerCaps === null || state.printerCapsFor !== printerName) {
+      state.printerCapsFor = printerName;
+      fetchPrinterCapabilities(printerName);
+    }
+    const capsCard = buildPrinterCapsCard();
+    if (capsCard) body.append(capsCard);
   }
 
   const card = el("div", { class: "card" });

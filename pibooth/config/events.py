@@ -31,13 +31,19 @@ EVENT_OPTIONS: list[tuple[str, str]] = [
     ("PICTURE", "text_alignments"),
     ("PICTURE", "overlays"),
     ("PICTURE", "backgrounds"),
+    ("PICTURE", "template"),
     ("WINDOW", "background"),
     ("WINDOW", "font"),
     ("WINDOW", "text_color"),
 ]
 
 #: Options among EVENT_OPTIONS whose value may reference existing image file(s)
-PATH_OPTIONS = {("PICTURE", "overlays"), ("PICTURE", "backgrounds"), ("WINDOW", "background")}
+PATH_OPTIONS = {
+    ("PICTURE", "overlays"),
+    ("PICTURE", "backgrounds"),
+    ("PICTURE", "template"),
+    ("WINDOW", "background"),
+}
 
 #: File extensions listed as "images" of an event profile
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"}

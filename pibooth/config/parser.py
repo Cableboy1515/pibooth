@@ -185,6 +185,12 @@ DEFAULT: "dict[str, dict[str, tuple[Any, str, str | None, Any]]]" = {
             None,
             None,
         ),
+        "template": (
+            "",
+            "Path to a picture layout template (.json designed in the web interface, or .xml from diagrams.net)",
+            None,
+            None,
+        ),
     },
     "CAMERA": {
         "type": (

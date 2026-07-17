@@ -9,6 +9,7 @@ from pibooth.plugins.camera_plugin import CameraPlugin
 from pibooth.plugins.lights_plugin import LightsPlugin
 from pibooth.plugins.picture_plugin import PicturePlugin
 from pibooth.plugins.printer_plugin import PrinterPlugin
+from pibooth.plugins.template_plugin import TemplatePlugin
 from pibooth.plugins.upload_plugin import UploadPlugin
 from pibooth.plugins.view_plugin import ViewPlugin
 from pibooth.plugins.web_plugin import WebPlugin
@@ -70,6 +71,7 @@ class PiPluginManager(pluggy.PluginManager):
 
         plugins += [
             WebPlugin(self),  # Last called
+            TemplatePlugin(self),
             UploadPlugin(self),
             LightsPlugin(self),
             ViewPlugin(self),

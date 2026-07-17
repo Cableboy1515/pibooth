@@ -16,14 +16,6 @@ from werkzeug.utils import secure_filename
 from pibooth import fonts
 from pibooth.utils import LOGGER
 
-#: Canvas size in pixels (300 dpi 4x6 inch paper) for each orientation
-CANVAS_SIZES = {
-    "portrait": (1800, 2700),
-    "landscape": (2700, 1800),
-}
-
-DEFAULT_ORIENTATION = "portrait"
-
 
 def _hex_to_rgb(value: str) -> tuple[int, int, int]:
     """Convert a ``#rrggbb`` hex string into a RGB tuple."""
@@ -133,16 +125,17 @@ _RENDERERS = {
 }
 
 
-def render_design(spec: dict[str, Any], assets_dir: str) -> Image.Image:
+def render_design(spec: dict[str, Any], assets_dir: str, size: tuple[int, int]) -> Image.Image:
     """Render a design spec into a transparent RGBA PNG at print resolution.
 
     :param spec: design spec, see module documentation for the JSON schema
     :param assets_dir: directory in which referenced image assets are looked up
+    :param size: canvas size in pixels, matching ``spec["orientation"]`` (the
+                 final-picture geometry, see
+                 :py:func:`pibooth.web.templates_api.get_final_picture_size`)
 
-    :return: RGBA image, sized according to ``spec["orientation"]``
+    :return: RGBA image of the given size
     """
-    orientation = spec.get("orientation", DEFAULT_ORIENTATION)
-    size = CANVAS_SIZES.get(orientation, CANVAS_SIZES[DEFAULT_ORIENTATION])
     canvas = Image.new("RGBA", size, (0, 0, 0, 0))
 
     for element in spec.get("elements", []):

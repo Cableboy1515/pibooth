@@ -17,6 +17,7 @@ from flask import Blueprint, Response, abort, current_app, jsonify, request, sen
 from pibooth import fonts
 from pibooth.utils import LOGGER
 from pibooth.web.designer import render_design
+from pibooth.web.templates_api import get_final_picture_size
 
 designer_api = Blueprint("designer_api", __name__, url_prefix="/api")
 
@@ -58,6 +59,22 @@ def _sanitize_name(name: str) -> str:
 
 def _designs_dir(cfg: Any) -> str:
     return osp.join(cfg.join_path("assets"), "designs")
+
+
+def _canvas_size(cfg: Any, orientation: str) -> tuple[int, int]:
+    """Return the canvas size to render a design of the given orientation,
+    following the current final-picture geometry (see
+    :py:func:`pibooth.web.templates_api.get_final_picture_size`).
+
+    The geometry is always resolved for its own (possibly template-driven)
+    orientation; when that differs from the design's own orientation, the
+    dimensions are swapped so the design still renders in its own orientation.
+    """
+    width, height, _source = get_final_picture_size(cfg, variant=0)
+    geometry_orientation = "portrait" if width < height else "landscape"
+    if geometry_orientation != orientation:
+        width, height = height, width
+    return width, height
 
 
 def _design_paths(cfg: Any, name: str) -> tuple[str, str, str]:
@@ -172,7 +189,8 @@ def create_design() -> Response:
 
     with pibooth["lock"]:
         try:
-            image = render_design(spec, assets_dir)
+            size = _canvas_size(cfg, spec["orientation"])
+            image = render_design(spec, assets_dir, size)
         except (OSError, ValueError) as ex:
             abort(400, description=f"Cannot render design: {ex}")
 

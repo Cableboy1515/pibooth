@@ -44,14 +44,14 @@ def make_asset(assets_dir, name, size=(20, 20), color=(255, 0, 0)):
 
 def test_render_design_portrait_size_and_mode(tmp_path):
     spec = {"name": "empty", "orientation": "portrait", "elements": []}
-    image = render_design(spec, str(tmp_path))
+    image = render_design(spec, str(tmp_path), (1800, 2700))
     assert image.size == (1800, 2700)
     assert image.mode == "RGBA"
 
 
 def test_render_design_landscape_size(tmp_path):
     spec = {"name": "empty", "orientation": "landscape", "elements": []}
-    image = render_design(spec, str(tmp_path))
+    image = render_design(spec, str(tmp_path), (2700, 1800))
     assert image.size == (2700, 1800)
 
 
@@ -73,7 +73,7 @@ def test_render_text_element_draws_pixels(tmp_path):
             }
         ],
     }
-    image = render_design(spec, str(tmp_path))
+    image = render_design(spec, str(tmp_path), (1800, 2700))
     # Search a region around the text's center for non-transparent pixels
     cx, cy = int(0.5 * image.width), int(0.5 * image.height)
     region = image.crop((cx - 150, cy - 100, cx + 150, cy + 100))
@@ -87,7 +87,7 @@ def test_render_frame_element_draws_border(tmp_path):
         "orientation": "portrait",
         "elements": [{"type": "frame", "color": "#00ff00", "width": 0.02, "radius": 0.0, "inset": 0.05}],
     }
-    image = render_design(spec, str(tmp_path))
+    image = render_design(spec, str(tmp_path), (1800, 2700))
     min_dim = min(image.size)
     inset = int(0.05 * min_dim)
     # Sample along the top border, away from the rounded corners
@@ -103,7 +103,7 @@ def test_render_frame_element_draws_border(tmp_path):
 
 def test_render_unknown_element_type_ignored(tmp_path):
     spec = {"name": "unknown", "orientation": "portrait", "elements": [{"type": "sparkle", "x": 0.5, "y": 0.5}]}
-    image = render_design(spec, str(tmp_path))
+    image = render_design(spec, str(tmp_path), (1800, 2700))
     assert image.size == (1800, 2700)
     # Fully transparent: nothing was drawn
     assert all(image.getpixel((x, y))[3] == 0 for x in (0, image.width - 1) for y in (0, image.height - 1))
@@ -116,7 +116,7 @@ def test_render_missing_image_asset_skipped(tmp_path):
         "elements": [{"type": "image", "asset": "does-not-exist.png", "x": 0.5, "y": 0.5, "width": 0.2}],
     }
     # Should not raise despite the missing asset
-    image = render_design(spec, str(tmp_path))
+    image = render_design(spec, str(tmp_path), (1800, 2700))
     assert image.size == (1800, 2700)
 
 
@@ -155,6 +155,12 @@ def test_designs_create_list_get_roundtrip(client, web_cfg):
     designs_dir = osp.join(assets_dir, "designs")
     assert osp.isfile(osp.join(designs_dir, "gold-frame.json"))
     assert osp.isfile(osp.join(designs_dir, "gold-frame.png"))
+
+    # The rendered PNG follows the current final-picture geometry (no template
+    # assigned here, so this is the 4x6@300dpi default) rather than a constant.
+    geometry = client.get("/api/geometry").get_json()
+    with Image.open(osp.join(designs_dir, "gold-frame.png")) as png:
+        assert png.size == (geometry["width"], geometry["height"])
 
     listing = client.get("/api/designs").get_json()["designs"]
     names = [item["name"] for item in listing]

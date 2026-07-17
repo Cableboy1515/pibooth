@@ -203,3 +203,12 @@ def test_index_served(client):
     response = client.get("/")
     assert response.status_code == 200
     assert b"pibooth" in response.data
+
+
+def test_unknown_api_endpoint_returns_json_404(client):
+    # Unknown API paths must not fall into the static catch-all (405)
+    response = client.post("/api/definitely-not-a-real-endpoint")
+    assert response.status_code == 404
+    assert "restart" in response.get_json()["description"]
+    response = client.put("/api/nope/nested")
+    assert response.status_code == 404

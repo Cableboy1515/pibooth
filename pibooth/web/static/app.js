@@ -71,11 +71,20 @@ async function api(path, options = {}) {
   const response = await fetch(path, options);
   if (!response.ok) {
     let message = `${response.status} ${response.statusText}`;
+    let described = false;
     try {
       const body = await response.json();
-      if (body.description) message = body.description;
+      if (body.description) {
+        message = body.description;
+        described = true;
+      }
     } catch (e) {
       /* not json */
+    }
+    if (!described && (response.status === 405 || response.status === 404)) {
+      // A bare 404/405 (no JSON description) means the URL never reached our
+      // API — typical when the frontend files are newer than the running server
+      message += " — if pibooth was updated recently, restart it and reload this page";
     }
     throw new Error(message);
   }

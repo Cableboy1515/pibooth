@@ -467,6 +467,17 @@ def create_app(cfg: PiConfigParser, plugin_manager: Any, application: "PiApplica
     app.register_blueprint(templates_api)
     app.register_blueprint(uploads_api)
 
+    # Unknown /api/ paths would otherwise fall into the static catch-all route
+    # (which only allows GET) and produce a confusing 405 — typically when the
+    # frontend files on disk are newer than the running server process.
+    @app.route("/api/<path:endpoint>", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
+    def unknown_api(endpoint: str) -> Response:
+        abort(
+            404,
+            description=f"Unknown API endpoint '/api/{endpoint}' — if pibooth was updated recently, "
+            "restart it so the web interface and the application match.",
+        )
+
     return app
 
 

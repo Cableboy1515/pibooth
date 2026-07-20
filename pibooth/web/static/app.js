@@ -8,10 +8,12 @@ const state = {
   printerCaps: null, // /api/printers/<name>/capabilities payload, refreshed per PRINTER section render
   printerCapsFor: null, // printer name the current printerCaps was fetched for
   assets: [], // /api/assets payload
+  designs: [], // /api/designs payload (overlay-designer creations)
   dirty: {}, // {SECTION: {option: rawConfigString}}
   active: null, // active section name
   previewVariant: 0,
   assetCallback: null, // callback of the currently open asset picker
+  pickerDesignLayer: null, // "overlay" | "background" | null: whether the open picker also offers designs, and for which layer
 };
 
 //: Same inches as pibooth.printer.PAPER_FORMATS, duplicated here so the
@@ -267,17 +269,43 @@ function widgetColor(section, opt) {
   return el("div", { class: "row" }, input, text);
 }
 
+/** Whether opt's picker should also offer overlay-designer creations, and
+ * for which layer — only the Picture section's overlay/background fields
+ * are wired into the picture-assembly pipeline the designer targets.
+ */
+function designLayerFor(section, opt) {
+  if (section !== "PICTURE") return null;
+  if (opt.name === "overlays") return "overlay";
+  if (opt.name === "backgrounds") return "background";
+  return null;
+}
+
 function widgetImage(section, opt) {
   let current = parseColor(opt.value) ? "" : opt.value;
+  const designLayer = designLayerFor(section, opt);
 
   const thumb = el("div", { class: "thumb empty" }, "none");
   const name = el("span", { class: "imgpick-name" });
 
+  function matchingDesign() {
+    if (!current) return null;
+    return (
+      state.designs.find((d) => d.png_path === current) ||
+      state.designs.find((d) => d.background_png_path === current) ||
+      null
+    );
+  }
+
   function refresh() {
     const assetName = basename(current);
     const isAsset = state.assets.some((asset) => asset.name === assetName);
-    name.textContent = current ? assetName : "No image selected";
-    if (current && isAsset) {
+    const design = designLayer ? matchingDesign() : null;
+    name.textContent = current ? (design ? `${design.name} (design)` : assetName) : "No image selected";
+    if (design) {
+      thumb.className = "thumb";
+      const layer = design.png_path === current ? "overlay" : "background";
+      thumb.style.backgroundImage = `url('/api/designs/${encodeURIComponent(design.name)}/image?layer=${layer}')`;
+    } else if (current && isAsset) {
       thumb.className = "thumb";
       thumb.style.backgroundImage = `url('/api/assets/${encodeURIComponent(assetName)}')`;
     } else {
@@ -289,11 +317,14 @@ function widgetImage(section, opt) {
 
   const choose = el("button", { class: "btn small" }, "Choose image…");
   choose.onclick = () =>
-    openAssetPicker((path) => {
-      current = path;
-      refresh();
-      change(section, opt, current);
-    });
+    openAssetPicker(
+      (path) => {
+        current = path;
+        refresh();
+        change(section, opt, current);
+      },
+      { designLayer }
+    );
   const clear = el("button", { class: "btn small ghost" }, "Clear");
   clear.onclick = () => {
     current = "";
@@ -577,9 +608,45 @@ async function loadAssets() {
   }
 }
 
+async function loadDesigns() {
+  try {
+    state.designs = (await api("/api/designs")).designs;
+  } catch (error) {
+    state.designs = [];
+  }
+}
+
 function renderAssetGrid() {
   const grid = $("asset-grid");
   grid.replaceChildren();
+
+  if (state.pickerDesignLayer) {
+    const layer = state.pickerDesignLayer;
+    const designs = state.designs.filter((d) => layer !== "background" || d.has_background);
+    grid.append(
+      el("div", { class: "asset-section-title" }, layer === "background" ? "Design backgrounds" : "Overlay designs")
+    );
+    if (!designs.length) {
+      grid.append(el("div", { class: "asset-empty" }, "No overlay design has a matching layer yet."));
+    } else {
+      for (const design of designs) {
+        const path = layer === "background" ? design.background_png_path : design.png_path;
+        const item = el(
+          "div",
+          { class: "asset-item" },
+          el("img", { src: `/api/designs/${encodeURIComponent(design.name)}/image?layer=${layer}`, loading: "lazy" }),
+          el("div", { class: "asset-name" }, design.name)
+        );
+        item.onclick = () => {
+          if (state.assetCallback) state.assetCallback(path);
+          closeAssetPicker();
+        };
+        grid.append(item);
+      }
+    }
+    grid.append(el("div", { class: "asset-section-title" }, "Uploaded images"));
+  }
+
   if (!state.assets.length) {
     grid.append(el("div", { class: "asset-empty" }, "No image uploaded yet."));
     return;
@@ -611,14 +678,20 @@ function renderAssetGrid() {
   }
 }
 
-function openAssetPicker(callback) {
+function openAssetPicker(callback, options = {}) {
   state.assetCallback = callback;
+  state.pickerDesignLayer = options.designLayer || null;
   $("asset-modal").classList.remove("hidden");
-  loadAssets().then(renderAssetGrid);
+  if (state.pickerDesignLayer) {
+    Promise.all([loadAssets(), loadDesigns()]).then(renderAssetGrid);
+  } else {
+    loadAssets().then(renderAssetGrid);
+  }
 }
 
 function closeAssetPicker() {
   state.assetCallback = null;
+  state.pickerDesignLayer = null;
   $("asset-modal").classList.add("hidden");
 }
 
@@ -851,7 +924,7 @@ async function init() {
     document.body.replaceChildren(el("p", { style: "padding:40px" }, `Cannot load configuration: ${error.message}`));
     return;
   }
-  await Promise.all([loadStatus(), loadFonts(), loadAssets()]);
+  await Promise.all([loadStatus(), loadFonts(), loadAssets(), loadDesigns()]);
   state.active = CUSTOM_PAGES.length ? CUSTOM_PAGES[0].id : state.schema.sections[0].name;
   renderNav();
   renderActive();

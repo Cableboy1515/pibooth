@@ -180,12 +180,18 @@ def list_designs() -> Response:
                     spec = json.load(fp)
             except (OSError, ValueError):
                 continue
+            png_path = osp.join(designs_dir, f"{name}.png")
+            bg_png_path = osp.join(designs_dir, f"{name}.background.png")
+            has_background = osp.isfile(bg_png_path)
             designs.append(
                 {
                     "name": name,
                     "orientation": spec.get("orientation", "portrait"),
                     "modified": datetime.fromtimestamp(osp.getmtime(json_path)).isoformat(),
-                    "png": osp.isfile(osp.join(designs_dir, f"{name}.png")),
+                    "png": osp.isfile(png_path),
+                    "png_path": png_path,
+                    "has_background": has_background,
+                    "background_png_path": bg_png_path if has_background else None,
                 }
             )
     return jsonify({"designs": sorted(designs, key=lambda item: item["name"])})
@@ -309,6 +315,33 @@ def delete_design(name: str) -> Response:
     if was_assigned or bg_was_assigned:
         pibooth["notify"]()
     return jsonify({"ok": True})
+
+
+@designer_api.route("/designs/<name>/image", methods=["GET"])
+def get_design_image(name: str) -> Response:
+    """Serve a design's rendered PNG (overlay by default, or its background
+    via ``?layer=background``) — used for thumbnails in the Picture
+    section's image picker, which otherwise only serves the top-level
+    uploads directory (see ``/api/assets/<name>``).
+    """
+    cfg = _pibooth()["cfg"]
+    try:
+        name, json_path, png_path, bg_png_path = _design_paths(cfg, name)
+    except ValueError as ex:
+        abort(400, description=str(ex))
+    if not osp.isfile(json_path):
+        abort(404, description=f"Design '{name}' not found")
+
+    layer = request.args.get("layer", "overlay")
+    if layer not in ("overlay", "background"):
+        abort(400, description="'layer' must be 'overlay' or 'background'")
+    path = bg_png_path if layer == "background" else png_path
+    if not osp.isfile(path):
+        abort(404, description=f"Design '{name}' has no rendered {layer} image")
+
+    response = send_file(path)
+    response.headers["Cache-Control"] = "no-cache"
+    return response
 
 
 @designer_api.route("/fonts/<name>/file", methods=["GET"])

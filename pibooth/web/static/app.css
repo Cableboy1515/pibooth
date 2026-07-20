@@ -348,6 +348,18 @@ input[type="color"] {
   line-height: 1;
 }
 .asset-empty { color: var(--muted); font-size: 13px; grid-column: 1 / -1; text-align: center; padding: 10px; }
+.asset-section-title {
+  grid-column: 1 / -1;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--muted);
+  margin-top: 6px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+}
+.asset-section-title:first-child { margin-top: 0; }
 
 /* ------------------------------------------------------------------ events */
 .event-grid {

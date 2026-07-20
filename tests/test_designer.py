@@ -228,10 +228,43 @@ def test_designs_create_list_get_roundtrip(client, web_cfg):
     entry = next(item for item in listing if item["name"] == "gold-frame")
     assert entry["orientation"] == "portrait"
     assert entry["png"] is True
+    assert entry["png_path"] == osp.join(designs_dir, "gold-frame.png")
+    # No background-layer element in this design
+    assert entry["has_background"] is False
+    assert entry["background_png_path"] is None
 
     fetched = client.get("/api/designs/gold-frame").get_json()
     assert fetched["orientation"] == "portrait"
     assert len(fetched["elements"]) == 3
+
+
+def test_designs_list_reports_background_fields(client, web_cfg):
+    assets_dir = web_cfg.join_path("assets")
+    make_asset(assets_dir, "photo.png")
+    spec = {
+        "name": "with-bg-listing",
+        "orientation": "portrait",
+        "elements": [
+            {
+                "type": "image",
+                "asset": "photo.png",
+                "x": 0.5,
+                "y": 0.5,
+                "width": 0.5,
+                "rotation": 0,
+                "opacity": 1.0,
+                "layer": "background",
+            }
+        ],
+    }
+    client.post("/api/designs", json={"spec": spec, "assign": False})
+
+    designs_dir = osp.join(assets_dir, "designs")
+    listing = client.get("/api/designs").get_json()["designs"]
+    entry = next(item for item in listing if item["name"] == "with-bg-listing")
+    assert entry["has_background"] is True
+    assert entry["background_png_path"] == osp.join(designs_dir, "with-bg-listing.background.png")
+    assert osp.isfile(entry["background_png_path"])
 
 
 def test_designs_assign_sets_overlay_config(client, web_cfg):
@@ -500,6 +533,65 @@ def test_designs_delete_missing_returns_404(client):
 
 def test_designs_get_missing_returns_404(client):
     assert client.get("/api/designs/does-not-exist").status_code == 404
+
+
+# --------------------------------------------------------------- design image
+
+
+def test_design_image_serves_overlay_by_default(client, web_cfg):
+    spec = {"name": "for-thumb", "orientation": "portrait", "elements": []}
+    client.post("/api/designs", json={"spec": spec})
+
+    response = client.get("/api/designs/for-thumb/image")
+    assert response.status_code == 200
+    assert response.data.startswith(b"\x89PNG")
+
+
+def test_design_image_serves_background_when_present(client, web_cfg):
+    assets_dir = web_cfg.join_path("assets")
+    make_asset(assets_dir, "photo.png")
+    spec = {
+        "name": "for-thumb-bg",
+        "orientation": "portrait",
+        "elements": [
+            {
+                "type": "image",
+                "asset": "photo.png",
+                "x": 0.5,
+                "y": 0.5,
+                "width": 0.5,
+                "rotation": 0,
+                "opacity": 1.0,
+                "layer": "background",
+            }
+        ],
+    }
+    client.post("/api/designs", json={"spec": spec})
+
+    response = client.get("/api/designs/for-thumb-bg/image?layer=background")
+    assert response.status_code == 200
+    assert response.data.startswith(b"\x89PNG")
+
+
+def test_design_image_background_404_when_absent(client, web_cfg):
+    spec = {"name": "overlay-only-thumb", "orientation": "portrait", "elements": []}
+    client.post("/api/designs", json={"spec": spec})
+
+    response = client.get("/api/designs/overlay-only-thumb/image?layer=background")
+    assert response.status_code == 404
+
+
+def test_design_image_unknown_design_returns_404(client):
+    response = client.get("/api/designs/does-not-exist/image")
+    assert response.status_code == 404
+
+
+def test_design_image_invalid_layer_returns_400(client, web_cfg):
+    spec = {"name": "bad-layer-thumb", "orientation": "portrait", "elements": []}
+    client.post("/api/designs", json={"spec": spec})
+
+    response = client.get("/api/designs/bad-layer-thumb/image?layer=sideways")
+    assert response.status_code == 400
 
 
 # -------------------------------------------------------------------- preview

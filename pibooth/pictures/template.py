@@ -35,6 +35,7 @@ from pibooth.utils import LOGGER
 CAPTURE = "capture"
 TEXT = "text"
 IMAGE = "image"
+FRAME = "frame"
 
 #: Muted slot palette used to render the layout guide layer (web overlay
 #: designer guide overlay, and the exported guide.svg/guide.png). Mirrors
@@ -47,18 +48,46 @@ GUIDE_COLORS: list[tuple[int, int, int]] = [
 ]
 
 
+def _hex_to_rgb(value: str) -> tuple[int, int, int]:
+    """Convert a ``#rrggbb`` hex string into a RGB tuple."""
+    value = value.lstrip("#")
+    if len(value) != 6:
+        raise ValueError(f"Invalid color '#{value}'")
+    return int(value[0:2], 16), int(value[2:4], 16), int(value[4:6], 16)
+
+
 @dataclass
 class TemplateShape:
     """One positioned element of a :class:`TemplatePage`.
 
-    :attr kind: ``"capture"``, ``"text"`` or ``"image"``
-    :attr index: capture index (1..4), text index (1..2), 0 for images
+    :attr kind: ``"capture"``, ``"text"``, ``"image"`` or ``"frame"``
+    :attr index: capture index (1..4), text index (1..2), 0 for images/frames
     :attr asset: basename of the image file in ``<configdir>/assets/`` (image shapes only)
-    :attr x: left position, as a fraction of the page width
-    :attr y: top position, as a fraction of the page height
-    :attr width: width, as a fraction of the page width
-    :attr height: height, as a fraction of the page height
-    :attr rotation: rotation in degrees, clockwise, as authored by a user
+    :attr x: left position, as a fraction of the page width — or, when
+              ``anchor`` is set, the horizontal offset of this shape's center
+              from the anchor capture slot's own center, as a fraction of
+              the anchor's width (0 = centered on the slot)
+    :attr y: top position, as a fraction of the page height — or, when
+              ``anchor`` is set, the same offset semantics as ``x`` along
+              the vertical axis
+    :attr width: width, as a fraction of the page width — or, when
+                  ``anchor`` is set, a scale multiplier of the anchor slot's
+                  own width (1.0 = same width as the slot)
+    :attr height: height, as a fraction of the page height — or, when
+                   ``anchor`` is set, a scale multiplier of the anchor
+                   slot's own height
+    :attr rotation: rotation in degrees, clockwise, as authored by a user —
+                     or, when ``anchor`` is set, an additional rotation on
+                     top of the anchor slot's own rotation
+    :attr anchor: capture slot index this shape is anchored to, or ``0`` for
+                   absolute positioning (the default, and the only meaning
+                   for templates saved before this field existed)
+    :attr style_id: id of the :class:`FrameStyle` this shape uses (frame
+                     shapes only); empty/unknown ids are skipped at render time
+    :attr lock_aspect: for an image-kind frame style, whether ``height`` is
+                        derived from the image's own aspect ratio (``True``,
+                        the default) or independently authored (``False``);
+                        unused otherwise
     """
 
     kind: str
@@ -69,10 +98,14 @@ class TemplateShape:
     width: float
     height: float
     rotation: float = 0.0
+    anchor: int = 0
+    style_id: str = ""
+    lock_aspect: bool = True
 
     def rect_px(self, page_size: tuple[int, int]) -> tuple[int, int, int, int]:
         """Return the ``(x, y, width, height)`` pixel rectangle of this shape
-        for the given page size.
+        for the given page size, ignoring any ``anchor`` (see
+        :func:`resolve_shape_rect` for the anchor-aware resolution).
         """
         page_width, page_height = page_size
         return (
@@ -93,8 +126,13 @@ class TemplateShape:
             "height": self.height,
             "rotation": self.rotation,
         }
+        if self.anchor:
+            data["anchor"] = self.anchor
         if self.kind == IMAGE:
             data["asset"] = self.asset
+        if self.kind == FRAME:
+            data["styleId"] = self.style_id
+            data["lockAspect"] = self.lock_aspect
         return data
 
 
@@ -152,6 +190,49 @@ class TemplatePage:
         }
 
 
+def resolve_shape_rect(shape: TemplateShape, page: TemplatePage) -> tuple[int, int, int, int, float]:
+    """Return ``(x, y, width, height, rotation)`` in PIXELS for ``shape`` on
+    ``page``, resolving its ``anchor`` if set.
+
+    An anchored shape's ``x``/``y``/``width``/``height``/``rotation`` are
+    reinterpreted relative to the capture-kind shape whose ``index`` matches
+    ``shape.anchor``: width/height become scale multipliers of the anchor's
+    own width/height, x/y become center-offset fractions of the anchor's
+    size, and rotation becomes an additional rotation on top of the
+    anchor's own rotation (see :class:`TemplateShape` for the exact
+    semantics). If the anchor target doesn't exist (e.g. the capture count
+    changed), the shape falls back to being treated as absolute rather than
+    disappearing.
+    """
+    if not shape.anchor:
+        x, y, width, height = shape.rect_px(page.size)
+        return x, y, width, height, shape.rotation
+
+    anchor_shape = next((s for s in page.shapes if s.kind == CAPTURE and s.index == shape.anchor), None)
+    if anchor_shape is None:
+        x, y, width, height = shape.rect_px(page.size)
+        return x, y, width, height, shape.rotation
+
+    acx = anchor_shape.x + anchor_shape.width / 2
+    acy = anchor_shape.y + anchor_shape.height / 2
+    resolved_width = anchor_shape.width * shape.width
+    resolved_height = anchor_shape.height * shape.height
+    resolved_cx = acx + shape.x * anchor_shape.width
+    resolved_cy = acy + shape.y * anchor_shape.height
+    resolved_x = resolved_cx - resolved_width / 2
+    resolved_y = resolved_cy - resolved_height / 2
+    rotation = anchor_shape.rotation + shape.rotation
+
+    page_width, page_height = page.size
+    return (
+        int(round(resolved_x * page_width)),
+        int(round(resolved_y * page_height)),
+        int(round(resolved_width * page_width)),
+        int(round(resolved_height * page_height)),
+        rotation,
+    )
+
+
 class Template:
     """A named collection of :class:`TemplatePage`, at most one per
     (captures count, orientation) pair.
@@ -198,6 +279,49 @@ class Template:
         return {"name": self.name, "pages": [page.to_dict() for page in self.pages]}
 
 
+@dataclass
+class FrameStyle:
+    """A named, reusable frame appearance, referenced by frame-kind
+    :class:`TemplateShape` instances via ``style_id`` — so editing a style
+    updates every shape using it, in any template. Stored as a flat list at
+    ``<configdir>/assets/frame_styles.json`` (see :func:`load_frame_styles`).
+
+    :attr id: stable identifier referenced by ``TemplateShape.style_id``
+    :attr name: display name shown in the editor
+    :attr kind: ``"vector"`` (a drawn outline) or ``"image"`` (a transparent
+                PNG asset)
+    :attr color: outline color, ``vector`` only
+    :attr border_width: outline thickness, ``vector`` only — as a fraction
+                         of the *shape's own resolved box* (not the page),
+                         so the same style looks proportionally identical
+                         wherever/however large it's used
+    :attr radius: corner radius, same units as ``border_width``, ``vector`` only
+    :attr asset: basename of the image file in ``<configdir>/assets/``, ``image`` only
+    :attr opacity: image opacity, 0..1, ``image`` only
+    """
+
+    id: str
+    name: str
+    kind: str
+    color: str = "#000000"
+    border_width: float = 0.01
+    radius: float = 0.03
+    asset: str = ""
+    opacity: float = 1.0
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the canonical JSON-serializable representation."""
+        data: dict[str, Any] = {"id": self.id, "name": self.name, "kind": self.kind}
+        if self.kind == "vector":
+            data["color"] = self.color
+            data["borderWidth"] = self.border_width
+            data["radius"] = self.radius
+        elif self.kind == "image":
+            data["asset"] = self.asset
+            data["opacity"] = self.opacity
+        return data
+
+
 def _require_number(value: Any, description: str) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError(f"{description} must be numeric")
@@ -210,7 +334,7 @@ def _shape_from_dict(raw: Any, page_index: int, shape_index: int) -> TemplateSha
         raise ValueError(f"Page #{page_index} shape #{shape_index} must be an object")
 
     kind = raw.get("type")
-    if kind not in (CAPTURE, TEXT, IMAGE):
+    if kind not in (CAPTURE, TEXT, IMAGE, FRAME):
         raise ValueError(f"Page #{page_index} shape #{shape_index}: invalid 'type' {kind!r}")
 
     label = f"Page #{page_index} shape #{shape_index} ('{kind}')"
@@ -225,9 +349,28 @@ def _shape_from_dict(raw: Any, page_index: int, shape_index: int) -> TemplateSha
     except (TypeError, ValueError) as ex:
         raise ValueError(f"{label} 'index' must be an integer") from ex
 
-    asset = str(raw.get("asset", "")) if kind == IMAGE else ""
+    try:
+        anchor = int(raw.get("anchor", 0))
+    except (TypeError, ValueError) as ex:
+        raise ValueError(f"{label} 'anchor' must be an integer") from ex
 
-    return TemplateShape(kind=kind, index=index, asset=asset, x=x, y=y, width=width, height=height, rotation=rotation)
+    asset = str(raw.get("asset", "")) if kind == IMAGE else ""
+    style_id = str(raw.get("styleId", "")) if kind == FRAME else ""
+    lock_aspect = bool(raw.get("lockAspect", True)) if kind == FRAME else True
+
+    return TemplateShape(
+        kind=kind,
+        index=index,
+        asset=asset,
+        x=x,
+        y=y,
+        width=width,
+        height=height,
+        rotation=rotation,
+        anchor=anchor,
+        style_id=style_id,
+        lock_aspect=lock_aspect,
+    )
 
 
 def template_from_dict(data: Any) -> Template:
@@ -315,6 +458,81 @@ def load_template(path: str) -> Template:
         return template_from_dict(parse_mxgraph(path, assets_dir))
 
     raise ValueError(f"Unsupported template file extension '{ext}'")
+
+
+# --- frame styles (shared, reusable frame-kind shape appearances) ----------
+
+
+def frame_style_from_dict(raw: Any, index: int) -> FrameStyle:
+    """Parse and validate one canonical frame-style dict."""
+    if not isinstance(raw, dict):
+        raise ValueError(f"Frame style #{index} must be an object")
+
+    style_id = str(raw.get("id", "")).strip()
+    if not style_id:
+        raise ValueError(f"Frame style #{index}: 'id' is required")
+
+    kind = raw.get("kind")
+    if kind not in ("vector", "image"):
+        raise ValueError(f"Frame style '{style_id}': invalid 'kind' {kind!r}")
+
+    name = str(raw.get("name", "")).strip() or style_id
+
+    return FrameStyle(
+        id=style_id,
+        name=name,
+        kind=kind,
+        color=str(raw.get("color", "#000000")),
+        border_width=_require_number(raw.get("borderWidth", 0.01), f"Frame style '{style_id}' 'borderWidth'"),
+        radius=_require_number(raw.get("radius", 0.03), f"Frame style '{style_id}' 'radius'"),
+        asset=str(raw.get("asset", "")),
+        opacity=_require_number(raw.get("opacity", 1.0), f"Frame style '{style_id}' 'opacity'"),
+    )
+
+
+def frame_styles_from_list(data: Any) -> list[FrameStyle]:
+    """Build and validate the list of :class:`FrameStyle` from its canonical
+    list-of-dicts representation.
+
+    :raises ValueError: with a human readable message if the data is invalid
+    """
+    if not isinstance(data, list):
+        raise ValueError("Frame styles must be a JSON array")
+    styles = [frame_style_from_dict(raw, index) for index, raw in enumerate(data)]
+    seen_ids = {style.id for style in styles}
+    if len(seen_ids) != len(styles):
+        raise ValueError("Frame style ids must be unique")
+    return styles
+
+
+def _frame_styles_path(assets_dir: str) -> str:
+    return osp.join(assets_dir, "frame_styles.json")
+
+
+def load_frame_styles(assets_dir: str) -> list[FrameStyle]:
+    """Return the frame styles saved at ``<assets_dir>/frame_styles.json``,
+    or an empty list if the file doesn't exist or can't be parsed.
+    """
+    path = _frame_styles_path(assets_dir)
+    if not osp.isfile(path):
+        return []
+    try:
+        with open(path, encoding="utf-8") as fp:
+            data = json.load(fp)
+        return frame_styles_from_list(data)
+    except (OSError, ValueError) as ex:
+        LOGGER.warning("Cannot load frame styles '%s': %s", path, ex)
+        return []
+
+
+def save_frame_styles(assets_dir: str, styles: list[FrameStyle]) -> None:
+    """Save ``styles`` to ``<assets_dir>/frame_styles.json``, creating
+    ``assets_dir`` if needed.
+    """
+    os.makedirs(assets_dir, exist_ok=True)
+    path = _frame_styles_path(assets_dir)
+    with open(path, "w", encoding="utf-8") as fp:
+        json.dump([style.to_dict() for style in styles], fp, indent=2)
 
 
 # --- diagrams.net (mxGraph) XML import --------------------------------------
@@ -551,8 +769,10 @@ class TemplatePictureFactory(PilPictureFactory):
 
     def _build_matrix(self, image: Image.Image) -> Image.Image:
         """Draw every shape of the template page, in z-order."""
+        frame_styles = load_frame_styles(self.assets_dir) if any(s.kind == FRAME for s in self._page.shapes) else []
+
         for shape in self._page.shapes:
-            rect_x, rect_y, rect_w, rect_h = shape.rect_px(self._page.size)
+            rect_x, rect_y, rect_w, rect_h, rotation = resolve_shape_rect(shape, self._page)
             if rect_w <= 0 or rect_h <= 0:
                 continue
 
@@ -565,7 +785,7 @@ class TemplatePictureFactory(PilPictureFactory):
                 )
                 layer = Image.new("RGBA", (rect_w, rect_h), (255, 0, 0, 0))
                 self._paste_shape(src_image, layer, (rect_w - width) // 2, (rect_h - height) // 2)
-                self._paste_shape(layer, image, rect_x, rect_y, shape.rotation)
+                self._paste_shape(layer, image, rect_x, rect_y, rotation)
 
             elif shape.kind == TEXT:
                 index = shape.index - 1
@@ -589,7 +809,7 @@ class TemplatePictureFactory(PilPictureFactory):
                     x = rect_w - text_width
 
                 draw.text((x - offset_x // 2, (rect_h - text_height) // 2 - offset_y // 2), text, color, font=font)
-                self._paste_shape(layer, image, rect_x, rect_y, shape.rotation)
+                self._paste_shape(layer, image, rect_x, rect_y, rotation)
 
             elif shape.kind == IMAGE:
                 if not shape.asset:
@@ -606,7 +826,60 @@ class TemplatePictureFactory(PilPictureFactory):
                 src_image = src_image.resize((rect_w, rect_h), Resampling.LANCZOS)
                 layer = Image.new("RGBA", (rect_w, rect_h), (255, 0, 0, 0))
                 self._paste_shape(src_image, layer, 0, 0)
-                self._paste_shape(layer, image, rect_x, rect_y, shape.rotation)
+                self._paste_shape(layer, image, rect_x, rect_y, rotation)
+
+            elif shape.kind == FRAME:
+                if not shape.style_id:
+                    continue
+                style = next((s for s in frame_styles if s.id == shape.style_id), None)
+                if style is None:
+                    continue
+
+                if style.kind == "vector":
+                    min_dim = min(rect_w, rect_h)
+                    border_width_px = max(1, int(style.border_width * min_dim))
+                    inset = min(border_width_px / 2, (rect_w - 1) / 2, (rect_h - 1) / 2)
+                    radius_px = max(0, min(int(style.radius * min_dim), int(rect_w / 2 - inset), int(rect_h / 2 - inset)))
+                    layer = Image.new("RGBA", (rect_w, rect_h), (0, 0, 0, 0))
+                    draw = ImageDraw.Draw(layer)
+                    color = _hex_to_rgb(style.color)
+                    draw.rounded_rectangle(
+                        (inset, inset, rect_w - inset, rect_h - inset),
+                        radius=radius_px,
+                        outline=(*color, 255),
+                        width=border_width_px,
+                    )
+                    self._paste_shape(layer, image, rect_x, rect_y, rotation)
+
+                elif style.kind == "image":
+                    if not style.asset:
+                        continue
+                    asset_path = osp.join(self.assets_dir, style.asset)
+                    if not osp.isfile(asset_path):
+                        LOGGER.warning("Frame style '%s' image asset '%s' not found, skipped", style.id, style.asset)
+                        continue
+                    try:
+                        src_image = Image.open(asset_path).convert("RGBA")
+                    except OSError as ex:
+                        LOGGER.warning("Cannot open frame style '%s' image asset '%s': %s", style.id, style.asset, ex)
+                        continue
+
+                    target_w = max(1, rect_w)
+                    if shape.lock_aspect:
+                        ratio = src_image.height / src_image.width if src_image.width else 1
+                        target_h = max(1, int(target_w * ratio))
+                    else:
+                        target_h = max(1, rect_h)
+                    src_image = src_image.resize((target_w, target_h), Resampling.LANCZOS)
+
+                    if style.opacity < 1.0:
+                        alpha = src_image.getchannel("A").point(lambda a: int(a * style.opacity))
+                        src_image.putalpha(alpha)
+
+                    paste_y = rect_y + (rect_h - target_h) // 2
+                    layer = Image.new("RGBA", (target_w, target_h), (0, 0, 0, 0))
+                    self._paste_shape(src_image, layer, 0, 0)
+                    self._paste_shape(layer, image, rect_x, paste_y, rotation)
 
         return image
 
@@ -619,7 +892,7 @@ class TemplatePictureFactory(PilPictureFactory):
         """Draw outlines for every shape, useful to investigate position issues."""
         font = ImageFont.load_default()
         for shape in self._page.shapes:
-            rect_x, rect_y, rect_w, rect_h = shape.rect_px(self._page.size)
+            rect_x, rect_y, rect_w, rect_h, rotation = resolve_shape_rect(shape, self._page)
             if rect_w <= 0 or rect_h <= 0:
                 continue
             layer = Image.new("RGBA", (rect_w, rect_h), (255, 0, 0, 0))
@@ -627,7 +900,7 @@ class TemplatePictureFactory(PilPictureFactory):
             draw.rectangle(((0, 0), (rect_w - 1, rect_h - 1)), outline="red")
             label = shape.asset if shape.kind == IMAGE else str(shape.index)
             draw.text((10, 10), label, "red", font)
-            self._paste_shape(layer, image, rect_x, rect_y, shape.rotation)
+            self._paste_shape(layer, image, rect_x, rect_y, rotation)
 
 
 # --- layout guide export (web overlay/layout designer) -----------------------
@@ -683,7 +956,9 @@ def render_layout_guide(page: TemplatePage) -> Image.Image:
     min_dim = min(page.size)
 
     for shape in page.shapes:
-        rect_x, rect_y, rect_w, rect_h = shape.rect_px(page.size)
+        if shape.kind not in (CAPTURE, TEXT, IMAGE):
+            continue  # frame shapes are decorative, not position guides
+        rect_x, rect_y, rect_w, rect_h, rotation = resolve_shape_rect(shape, page)
         if rect_w <= 0 or rect_h <= 0:
             continue
 
@@ -702,7 +977,7 @@ def render_layout_guide(page: TemplatePage) -> Image.Image:
             draw.rectangle((0, 0, rect_w - 1, rect_h - 1), outline=(150, 150, 150, 255), width=2)
             _draw_centered_text(draw, shape.asset or "image", rect_w, rect_h, 0.15, (120, 120, 120, 255))
 
-        _composite_guide_layer(canvas, layer, rect_x, rect_y, rect_w, rect_h, shape.rotation)
+        _composite_guide_layer(canvas, layer, rect_x, rect_y, rect_w, rect_h, rotation)
 
     return canvas
 
@@ -726,7 +1001,9 @@ def render_layout_guide_svg(page: TemplatePage) -> str:
     ]
 
     for shape in page.shapes:
-        rect_x, rect_y, rect_w, rect_h = shape.rect_px(page.size)
+        if shape.kind not in (CAPTURE, TEXT, IMAGE):
+            continue  # frame shapes are decorative, not position guides
+        rect_x, rect_y, rect_w, rect_h, rotation = resolve_shape_rect(shape, page)
         if rect_w <= 0 or rect_h <= 0:
             continue
         cx = rect_x + rect_w / 2
@@ -735,7 +1012,7 @@ def render_layout_guide_svg(page: TemplatePage) -> str:
         # coordinate system, the same sense as our canonical `rotation`
         # field, so (unlike the PIL rendering path, which must negate for
         # PIL.Image.rotate's counter-clockwise convention) no sign flip.
-        transform = f' transform="rotate({shape.rotation} {cx} {cy})"' if shape.rotation else ""
+        transform = f' transform="rotate({rotation} {cx} {cy})"' if rotation else ""
 
         if shape.kind == CAPTURE:
             color = GUIDE_COLORS[(shape.index - 1) % len(GUIDE_COLORS)]

@@ -387,6 +387,16 @@ input[type="color"] {
 /* --------------------------------------------------------------- designer */
 .designer-layout { display: flex; gap: 24px; flex-wrap: wrap; align-items: flex-start; }
 .ratio-snap-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.frame-style-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px;
+  margin: 6px 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(35, 149, 135, 0.04);
+}
 
 .designer-canvas-wrap {
   flex: 0 0 auto;

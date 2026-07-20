@@ -8,12 +8,16 @@ from PIL import Image
 
 from pibooth.pictures import LANDSCAPE, PORTRAIT
 from pibooth.pictures.template import (
+    FrameStyle,
     Template,
     TemplatePictureFactory,
+    load_frame_styles,
     load_template,
     parse_mxgraph,
     render_layout_guide,
     render_layout_guide_svg,
+    resolve_shape_rect,
+    save_frame_styles,
     template_from_dict,
 )
 
@@ -80,6 +84,45 @@ def test_template_from_dict_round_trip():
     assert len(reloaded.pages) == len(template.pages)
 
 
+def test_template_from_dict_frame_shape_round_trip():
+    data = sample_template_dict()
+    data["pages"][0]["shapes"].append(
+        {
+            "type": "frame",
+            "x": 0.1,
+            "y": -0.05,
+            "width": 1.15,
+            "height": 1.15,
+            "rotation": 5,
+            "anchor": 1,
+            "styleId": "gold-thin",
+            "lockAspect": False,
+        }
+    )
+    template = template_from_dict(data)
+    page = template.get_page(1, PORTRAIT)
+    frame = next(s for s in page.shapes if s.kind == "frame")
+    assert frame.anchor == 1
+    assert frame.style_id == "gold-thin"
+    assert frame.lock_aspect is False
+
+    reloaded = template_from_dict(template.to_dict())
+    reloaded_frame = next(s for s in reloaded.get_page(1, PORTRAIT).shapes if s.kind == "frame")
+    assert reloaded_frame.anchor == 1
+    assert reloaded_frame.style_id == "gold-thin"
+    assert reloaded_frame.lock_aspect is False
+
+
+def test_template_from_dict_shape_without_anchor_defaults_absolute():
+    # Pre-existing templates (saved before the anchor field existed) must
+    # still parse, with every shape treated as absolute (anchor == 0).
+    data = sample_template_dict()
+    assert "anchor" not in data["pages"][0]["shapes"][0]
+    template = template_from_dict(data)
+    shape = template.get_page(1, PORTRAIT).shapes[0]
+    assert shape.anchor == 0
+
+
 def test_template_from_dict_duplicate_page_rejected():
     data = sample_template_dict()
     # Add a second page with the same (captures, orientation) as the first
@@ -105,6 +148,72 @@ def test_template_from_dict_missing_name_rejected():
     del data["name"]
     with pytest.raises(ValueError):
         template_from_dict(data)
+
+
+# --------------------------------------------------------- resolve_shape_rect
+
+
+def test_resolve_shape_rect_absolute_unchanged():
+    data = sample_template_dict()
+    template = template_from_dict(data)
+    page = template.get_page(1, PORTRAIT)
+    shape = page.shapes[0]  # capture, x=0.05 y=0.05 w=0.9 h=0.7, no anchor
+    assert shape.anchor == 0
+    x, y, w, h, rotation = resolve_shape_rect(shape, page)
+    assert (x, y, w, h) == shape.rect_px(page.size)
+    assert rotation == shape.rotation
+
+
+def test_resolve_shape_rect_anchored_tracks_slot():
+    data = sample_template_dict()
+    data["pages"][0]["shapes"].append(
+        {"type": "frame", "x": 0, "y": 0, "width": 1.0, "height": 1.0, "rotation": 0, "anchor": 1}
+    )
+    template = template_from_dict(data)
+    page = template.get_page(1, PORTRAIT)
+    anchor_shape = next(s for s in page.shapes if s.kind == "capture")
+    frame = next(s for s in page.shapes if s.kind == "frame")
+
+    # width=1.0, height=1.0, x=y=0 (centered, same size) -> resolves to
+    # exactly the anchor's own rect.
+    resolved = resolve_shape_rect(frame, page)
+    assert resolved[:4] == anchor_shape.rect_px(page.size)
+
+    # Move/resize the anchor: the frame's resolved rect must follow it.
+    anchor_shape.x, anchor_shape.y, anchor_shape.width, anchor_shape.height = 0.1, 0.2, 0.5, 0.3
+    resolved_after = resolve_shape_rect(frame, page)
+    assert resolved_after[:4] == anchor_shape.rect_px(page.size)
+
+
+def test_resolve_shape_rect_anchor_offset_and_scale():
+    data = sample_template_dict()
+    # Anchor is slot 1: x=0.05 y=0.05 w=0.9 h=0.7 (page 400x600 -> px: 20,30,360,420)
+    data["pages"][0]["shapes"].append(
+        {"type": "frame", "x": 0, "y": 0, "width": 1.2, "height": 1.2, "rotation": 10, "anchor": 1}
+    )
+    template = template_from_dict(data)
+    page = template.get_page(1, PORTRAIT)
+    frame = next(s for s in page.shapes if s.kind == "frame")
+
+    x, y, w, h, rotation = resolve_shape_rect(frame, page)
+    assert w == round(360 * 1.2)
+    assert h == round(420 * 1.2)
+    # Centered on the anchor's own center regardless of the scale change.
+    anchor_cx, anchor_cy = 20 + 360 / 2, 30 + 420 / 2
+    assert abs((x + w / 2) - anchor_cx) <= 1
+    assert abs((y + h / 2) - anchor_cy) <= 1
+    assert rotation == 10  # anchor has rotation 0, frame adds 10
+
+
+def test_resolve_shape_rect_missing_anchor_falls_back_to_absolute():
+    data = sample_template_dict()
+    data["pages"][0]["shapes"].append(
+        {"type": "frame", "x": 0.1, "y": 0.1, "width": 0.2, "height": 0.2, "rotation": 0, "anchor": 99}
+    )
+    template = template_from_dict(data)
+    page = template.get_page(1, PORTRAIT)
+    frame = next(s for s in page.shapes if s.kind == "frame")
+    assert resolve_shape_rect(frame, page)[:4] == frame.rect_px(page.size)
 
 
 def test_load_template_json(tmp_path):
@@ -268,6 +377,142 @@ def test_template_picture_factory_missing_image_asset_skipped(tmp_path):
     factory = TemplatePictureFactory(template, PORTRAIT, *captures, assets_dir=str(tmp_path))
     image = factory.build()  # Must not raise despite the missing asset
     assert image.size == (400, 600)
+
+
+def test_template_picture_factory_vector_frame_at_anchored_position(tmp_path):
+    data = sample_template_dict()
+    # Anchor slot 1 is x=0.05 y=0.05 w=0.9 h=0.7 (page 400x600 -> px 20,30,360,420)
+    data["pages"][0]["shapes"].append(
+        {
+            "type": "frame",
+            "x": 0,
+            "y": 0,
+            "width": 1.0,
+            "height": 1.0,
+            "rotation": 0,
+            "anchor": 1,
+            "styleId": "gold-thin",
+        }
+    )
+    template = template_from_dict(data)
+
+    assets_dir = tmp_path / "assets"
+    assets_dir.mkdir()
+    save_frame_styles(
+        str(assets_dir), [FrameStyle(id="gold-thin", name="Gold thin", kind="vector", color="#00ff00", border_width=0.05, radius=0.0)]
+    )
+
+    captures = [make_capture((100, 150))]
+    factory = TemplatePictureFactory(template, PORTRAIT, *captures, assets_dir=str(assets_dir))
+    image = factory.build()  # RGB output (no alpha channel), white background
+
+    # Border should appear near the anchor's own top edge (y=30), not at
+    # the full-canvas edge and not at the canvas center.
+    x = image.width // 2
+
+    def greenish(pixel):
+        return pixel[1] > pixel[0] and pixel[1] > pixel[2]
+
+    assert any(greenish(image.getpixel((x, y))) for y in range(25, 45))
+    assert not greenish(image.getpixel((x, 0)))  # canvas top edge: no border here
+
+
+def test_template_picture_factory_image_frame_style(tmp_path):
+    data = sample_template_dict()
+    # x/y are TOP-LEFT for an absolute (unanchored) shape -> box spans
+    # (200,300)-(400,600) on the 400x600 page.
+    data["pages"][0]["shapes"].append(
+        {"type": "frame", "x": 0.5, "y": 0.5, "width": 0.5, "height": 0.5, "rotation": 0, "styleId": "photo-frame"}
+    )
+    template = template_from_dict(data)
+
+    assets_dir = tmp_path / "assets"
+    assets_dir.mkdir()
+    Image.new("RGBA", (40, 20), (0, 0, 255, 255)).save(assets_dir / "frame.png")
+    save_frame_styles(str(assets_dir), [FrameStyle(id="photo-frame", name="Photo frame", kind="image", asset="frame.png")])
+
+    captures = [make_capture((100, 150))]
+    factory = TemplatePictureFactory(template, PORTRAIT, *captures, assets_dir=str(assets_dir))
+    image = factory.build()
+
+    x, y = 300, 450  # well inside the (200,300)-(400,600) box
+    pixel = image.getpixel((x, y))
+    assert pixel[2] > pixel[0]  # bluish
+
+
+def test_template_picture_factory_frame_missing_style_skipped(tmp_path):
+    data = sample_template_dict()
+    data["pages"][0]["shapes"].append(
+        {"type": "frame", "x": 0.5, "y": 0.5, "width": 0.5, "height": 0.5, "rotation": 0, "styleId": "does-not-exist"}
+    )
+    template = template_from_dict(data)
+    captures = [make_capture((100, 150))]
+    factory = TemplatePictureFactory(template, PORTRAIT, *captures, assets_dir=str(tmp_path))
+    image = factory.build()  # Must not raise despite the unknown style
+    assert image.size == (400, 600)
+
+
+def test_template_picture_factory_frame_no_style_id_skipped(tmp_path):
+    data = sample_template_dict()
+    data["pages"][0]["shapes"].append(
+        {"type": "frame", "x": 0.5, "y": 0.5, "width": 0.5, "height": 0.5, "rotation": 0}
+    )
+    template = template_from_dict(data)
+    captures = [make_capture((100, 150))]
+    factory = TemplatePictureFactory(template, PORTRAIT, *captures, assets_dir=str(tmp_path))
+    image = factory.build()
+    assert image.size == (400, 600)
+
+
+def test_template_picture_factory_image_frame_lock_aspect_false_stretches(tmp_path):
+    data = sample_template_dict()
+    # A square 40x40 source image stretched into a wide, short box (0.4 x 0.1
+    # of a 400x600 page -> 160x60px) must fill it exactly when unlocked,
+    # rather than preserving its own 1:1 aspect ratio.
+    data["pages"][0]["shapes"].append(
+        {
+            "type": "frame",
+            "x": 0.3,
+            "y": 0.3,
+            "width": 0.4,
+            "height": 0.1,
+            "rotation": 0,
+            "styleId": "stretchy",
+            "lockAspect": False,
+        }
+    )
+    template = template_from_dict(data)
+
+    assets_dir = tmp_path / "assets"
+    assets_dir.mkdir()
+    Image.new("RGBA", (40, 40), (255, 0, 0, 255)).save(assets_dir / "square.png")
+    save_frame_styles(str(assets_dir), [FrameStyle(id="stretchy", name="Stretchy", kind="image", asset="square.png")])
+
+    captures = [make_capture((100, 150))]
+    factory = TemplatePictureFactory(template, PORTRAIT, *captures, assets_dir=str(assets_dir))
+    image = factory.build()
+
+    # Corners of the resolved 160x60 box (top-left at 0.3*400=120, 0.3*600=180)
+    # should be red if stretched to fill; an aspect-preserved 60x60 square
+    # centered in that box would leave these corners at the white background.
+    assert image.getpixel((125, 185)) != (255, 255, 255)
+    assert image.getpixel((275, 185)) != (255, 255, 255)
+
+
+def test_load_frame_styles_missing_file_returns_empty(tmp_path):
+    assert load_frame_styles(str(tmp_path)) == []
+
+
+def test_save_and_load_frame_styles_round_trip(tmp_path):
+    styles = [
+        FrameStyle(id="a", name="A", kind="vector", color="#112233", border_width=0.02, radius=0.05),
+        FrameStyle(id="b", name="B", kind="image", asset="b.png", opacity=0.5),
+    ]
+    save_frame_styles(str(tmp_path), styles)
+    loaded = load_frame_styles(str(tmp_path))
+    assert [s.id for s in loaded] == ["a", "b"]
+    assert loaded[0].color == "#112233"
+    assert loaded[1].opacity == 0.5
 
 
 # ------------------------------------------------------------ layout guide
@@ -473,6 +718,47 @@ def test_api_templates_get_missing_returns_404(client):
 
 def test_api_templates_delete_missing_returns_404(client):
     assert client.delete("/api/templates/does-not-exist").status_code == 404
+
+
+# ------------------------------------------------------------- frame styles
+
+
+def test_api_frame_styles_create_list_update_delete(client, web_cfg):
+    style = {"id": "gold-thin", "name": "Gold thin", "kind": "vector", "color": "#d4af37", "borderWidth": 0.01, "radius": 0.03}
+
+    response = client.post("/api/frame-styles", json={"style": style})
+    assert response.status_code == 200
+    assert response.get_json()["style"]["id"] == "gold-thin"
+
+    listing = client.get("/api/frame-styles").get_json()["styles"]
+    assert [s["id"] for s in listing] == ["gold-thin"]
+    assert listing[0]["name"] == "Gold thin"
+
+    # Upsert: posting the same id again updates in place, not appends
+    updated = {**style, "name": "Gold thin (updated)", "color": "#ffffff"}
+    client.post("/api/frame-styles", json={"style": updated})
+    listing = client.get("/api/frame-styles").get_json()["styles"]
+    assert len(listing) == 1
+    assert listing[0]["name"] == "Gold thin (updated)"
+    assert listing[0]["color"] == "#ffffff"
+
+    delete_response = client.delete("/api/frame-styles/gold-thin")
+    assert delete_response.status_code == 200
+    assert client.get("/api/frame-styles").get_json()["styles"] == []
+
+
+def test_api_frame_styles_invalid_rejected(client):
+    response = client.post("/api/frame-styles", json={"style": {"id": "bad", "name": "Bad", "kind": "not-a-kind"}})
+    assert response.status_code == 400
+
+
+def test_api_frame_styles_missing_id_rejected(client):
+    response = client.post("/api/frame-styles", json={"style": {"name": "No id", "kind": "vector"}})
+    assert response.status_code == 400
+
+
+def test_api_frame_styles_delete_missing_returns_404(client):
+    assert client.delete("/api/frame-styles/does-not-exist").status_code == 404
 
 
 def test_api_templates_import_xml(client, web_cfg):

@@ -26,6 +26,7 @@ from pibooth.utils import LOGGER
 from pibooth.web import CONFIG_CHANGED
 from pibooth.web.designer_api import designer_api
 from pibooth.web.events_api import events_api
+from pibooth.web.frame_styles_api import frame_styles_api
 from pibooth.web.templates_api import templates_api
 from pibooth.web.uploads_api import uploads_api
 
@@ -464,6 +465,7 @@ def create_app(cfg: PiConfigParser, plugin_manager: Any, application: "PiApplica
 
     app.register_blueprint(events_api)
     app.register_blueprint(designer_api)
+    app.register_blueprint(frame_styles_api)
     app.register_blueprint(templates_api)
     app.register_blueprint(uploads_api)
 

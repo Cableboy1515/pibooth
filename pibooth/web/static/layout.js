@@ -19,6 +19,9 @@ const LAYOUT_PAPER_FORMATS = {
 
 const LAYOUT_CANVAS_HEIGHT = 520;
 
+//: Shape kinds (mirrors pibooth.pictures.template's CAPTURE/TEXT/IMAGE/FRAME).
+const FRAME = "frame";
+
 //: Common photo/camera aspect ratios offered for the "snap" capture-slot
 //: sizing shortcut, as width/height ratios.
 const PHOTO_ASPECT_RATIOS = {
@@ -41,6 +44,9 @@ const layoutState = {
   selectedShapeIndex: -1,
   imageCache: new Map(), // asset basename -> HTMLImageElement
   editor: null, // active CanvasEditor instance
+  frameStyles: [], // /api/frame-styles payload
+  editingStyleId: null, // id of the frame style currently expanded for editing in the properties panel, or null
+  styleDraft: null, // in-progress edits for layoutState.editingStyleId, applied on Save
 };
 
 /* ------------------------------------------------------------------ pages */
@@ -55,6 +61,59 @@ function findLayoutPage(captures, orientation) {
 
 function activeLayoutPage() {
   return findLayoutPage(layoutState.activeCaptures, layoutState.activeOrientation);
+}
+
+/** Find the capture-kind shape on `page` with the given slot index, or null. */
+function findCaptureShape(page, index) {
+  return page.shapes.find((s) => s.type === "capture" && s.index === index) || null;
+}
+
+/** Resolve a shape's effective {x, y, width, height, rotation} — in the same
+ * fraction-of-page units as an absolute shape — following its `anchor` if
+ * set. Mirrors pibooth.pictures.template.resolve_shape_rect() exactly (see
+ * that function's docstring for the field-reinterpretation semantics);
+ * identity passthrough when `shape.anchor` is falsy, so every existing
+ * absolute shape is unaffected. Falls back to absolute if the anchor
+ * target doesn't exist (e.g. the capture count changed).
+ */
+function resolveShapeRect(shape, page) {
+  const identity = { x: shape.x, y: shape.y, width: shape.width, height: shape.height, rotation: shape.rotation || 0 };
+  if (!shape.anchor) return identity;
+
+  const anchorShape = findCaptureShape(page, shape.anchor);
+  if (!anchorShape) return identity;
+
+  const acx = anchorShape.x + anchorShape.width / 2;
+  const acy = anchorShape.y + anchorShape.height / 2;
+  const width = anchorShape.width * shape.width;
+  const height = anchorShape.height * shape.height;
+  const cx = acx + shape.x * anchorShape.width;
+  const cy = acy + shape.y * anchorShape.height;
+  return {
+    x: cx - width / 2,
+    y: cy - height / 2,
+    width,
+    height,
+    rotation: (anchorShape.rotation || 0) + (shape.rotation || 0),
+  };
+}
+
+/** Inverse of resolveShapeRect(): given a shape's new absolute (resolved)
+ * rect — e.g. the result of a canvas drag — and the capture shape it's
+ * anchored to, compute the equivalent anchor-relative x/y/width/height/
+ * rotation to persist on `shape` instead of writing the absolute rect
+ * directly.
+ */
+function storeAnchoredRect(shape, anchorShape, resolved) {
+  const acx = anchorShape.x + anchorShape.width / 2;
+  const acy = anchorShape.y + anchorShape.height / 2;
+  const cx = resolved.x + resolved.width / 2;
+  const cy = resolved.y + resolved.height / 2;
+  shape.width = anchorShape.width ? resolved.width / anchorShape.width : 0;
+  shape.height = anchorShape.height ? resolved.height / anchorShape.height : 0;
+  shape.x = anchorShape.width ? (cx - acx) / anchorShape.width : 0;
+  shape.y = anchorShape.height ? (cy - acy) / anchorShape.height : 0;
+  shape.rotation = resolved.rotation - (anchorShape.rotation || 0);
 }
 
 function pageSizeFor(paper, dpi, orientation) {
@@ -146,14 +205,19 @@ function getLayoutCachedImage(name) {
   return image;
 }
 
-function drawLayoutShape(ctx, shape, size) {
-  const x = shape.x * size.width;
-  const y = shape.y * size.height;
-  const w = Math.max(1, shape.width * size.width);
-  const h = Math.max(1, shape.height * size.height);
+function findFrameStyle(styleId) {
+  return layoutState.frameStyles.find((s) => s.id === styleId) || null;
+}
+
+function drawLayoutShape(ctx, shape, page, size) {
+  const resolved = resolveShapeRect(shape, page);
+  const x = resolved.x * size.width;
+  const y = resolved.y * size.height;
+  const w = Math.max(1, resolved.width * size.width);
+  const h = Math.max(1, resolved.height * size.height);
   ctx.save();
   ctx.translate(x + w / 2, y + h / 2);
-  ctx.rotate(((shape.rotation || 0) * Math.PI) / 180);
+  ctx.rotate((resolved.rotation * Math.PI) / 180);
 
   if (shape.type === "capture") {
     ctx.fillStyle = SLOT_COLORS[(shape.index - 1) % SLOT_COLORS.length];
@@ -186,6 +250,32 @@ function drawLayoutShape(ctx, shape, size) {
       ctx.strokeRect(-w / 2, -h / 2, w, h);
       ctx.setLineDash([]);
     }
+  } else if (shape.type === FRAME) {
+    const style = findFrameStyle(shape.styleId);
+    if (!style) {
+      ctx.strokeStyle = "#cccccc";
+      ctx.setLineDash([2, 4]);
+      ctx.strokeRect(-w / 2, -h / 2, w, h);
+      ctx.setLineDash([]);
+    } else if (style.kind === "vector") {
+      const minDim = Math.min(w, h);
+      ctx.strokeStyle = style.color || "#000000";
+      ctx.lineWidth = Math.max(1, style.borderWidth * minDim);
+      ctx.beginPath();
+      ctx.roundRect(-w / 2, -h / 2, w, h, Math.max(0, style.radius * minDim));
+      ctx.stroke();
+    } else if (style.kind === "image") {
+      const image = getLayoutCachedImage(style.asset);
+      if (image && image.complete && image.naturalWidth) {
+        ctx.globalAlpha = style.opacity == null ? 1 : style.opacity;
+        if (shape.lockAspect) {
+          const drawH = w * (image.naturalHeight / image.naturalWidth);
+          ctx.drawImage(image, -w / 2, -drawH / 2, w, drawH);
+        } else {
+          ctx.drawImage(image, -w / 2, -h / 2, w, h);
+        }
+      }
+    }
   }
   ctx.restore();
 }
@@ -196,7 +286,7 @@ function drawLayoutScene(ctx) {
   ctx.fillRect(0, 0, size.width, size.height);
   const page = activeLayoutPage();
   if (!page) return;
-  for (const shape of page.shapes) drawLayoutShape(ctx, shape, size);
+  for (const shape of page.shapes) drawLayoutShape(ctx, shape, page, size);
 }
 
 function redrawLayout() {
@@ -213,15 +303,23 @@ function resizeLayoutCanvas(canvas) {
 /* ------------------------------------------------------ CanvasEditor adapter */
 
 function shapeItemRect(shape) {
-  return { x: shape.x, y: shape.y, w: shape.width, h: shape.height, rotation: shape.rotation || 0, centerBased: false };
+  const page = activeLayoutPage();
+  const resolved = page ? resolveShapeRect(shape, page) : { x: shape.x, y: shape.y, width: shape.width, height: shape.height, rotation: shape.rotation || 0 };
+  return { x: resolved.x, y: resolved.y, w: resolved.width, h: resolved.height, rotation: resolved.rotation, centerBased: false };
 }
 
 function setShapeItemRect(shape, rect) {
-  shape.x = rect.x;
-  shape.y = rect.y;
-  shape.width = rect.w;
-  shape.height = rect.h;
-  shape.rotation = rect.rotation;
+  const page = activeLayoutPage();
+  const anchorShape = shape.anchor && page ? findCaptureShape(page, shape.anchor) : null;
+  if (anchorShape) {
+    storeAnchoredRect(shape, anchorShape, { x: rect.x, y: rect.y, width: rect.w, height: rect.h, rotation: rect.rotation });
+  } else {
+    shape.x = rect.x;
+    shape.y = rect.y;
+    shape.width = rect.w;
+    shape.height = rect.h;
+    shape.rotation = rect.rotation;
+  }
 }
 
 function onLayoutSelect(shape) {
@@ -283,6 +381,108 @@ function snapShapeToRatio(shape, ratio) {
   shape.y = (centerY - newH / 2) / size.height;
 }
 
+function makeStyleId() {
+  return "style-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+}
+
+async function saveFrameStyle(draft) {
+  return api("/api/frame-styles", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ style: draft }),
+  });
+}
+
+/** Inline editor for the frame style currently being created/edited
+ * (`layoutState.styleDraft`), appended into the shape properties panel.
+ * `shape` is the frame shape whose "Style" dropdown triggered this, so
+ * Save can point it at the (possibly newly created) style immediately.
+ */
+function renderFrameStyleEditor(panel, shape, draft, isNew) {
+  const container = el("div", { class: "frame-style-editor" });
+
+  const nameInput = el("input", { type: "text", value: draft.name });
+  nameInput.oninput = () => (draft.name = nameInput.value);
+
+  const kindSelect = el("select");
+  kindSelect.append(el("option", { value: "vector" }, "Vector (drawn outline)"));
+  kindSelect.append(el("option", { value: "image" }, "Image (transparent PNG)"));
+  kindSelect.value = draft.kind;
+  kindSelect.onchange = () => {
+    draft.kind = kindSelect.value;
+    renderLayoutProperties();
+  };
+
+  container.append(field("Name", nameInput), field("Kind", kindSelect));
+
+  if (draft.kind === "vector") {
+    const colorInput = el("input", { type: "color", value: draft.color || "#000000" });
+    colorInput.oninput = () => (draft.color = colorInput.value);
+    container.append(
+      field("Color", colorInput),
+      rangeField("Border width", draft.borderWidth, 0.001, 0.2, 0.001, (v) => (draft.borderWidth = v)),
+      rangeField("Radius", draft.radius, 0, 0.5, 0.005, (v) => (draft.radius = v))
+    );
+  } else {
+    const assetName = el("span", { class: "imgpick-name" }, draft.asset || "No image selected");
+    const chooseBtn = el("button", { class: "btn small" }, "Choose image…");
+    chooseBtn.onclick = () =>
+      openAssetPicker((path) => {
+        const name = basename(path);
+        draft.asset = name;
+        assetName.textContent = name;
+      });
+    container.append(
+      field("Image", el("div", { class: "row" }, chooseBtn, assetName)),
+      rangeField("Opacity", draft.opacity == null ? 1 : draft.opacity, 0, 1, 0.05, (v) => (draft.opacity = v))
+    );
+  }
+
+  const saveBtn = el("button", { class: "btn small" }, "Save style");
+  saveBtn.onclick = async () => {
+    try {
+      await saveFrameStyle(draft);
+      await loadFrameStyles();
+      shape.styleId = draft.id;
+      layoutState.editingStyleId = null;
+      layoutState.styleDraft = null;
+      renderLayoutProperties();
+      redrawLayout();
+      toast(`Frame style "${draft.name}" saved ✔`);
+    } catch (error) {
+      toast(`Could not save style: ${error.message}`, "error");
+    }
+  };
+  const cancelBtn = el("button", { class: "btn small ghost" }, "Cancel");
+  cancelBtn.onclick = () => {
+    layoutState.editingStyleId = null;
+    layoutState.styleDraft = null;
+    renderLayoutProperties();
+  };
+  const buttons = [saveBtn, cancelBtn];
+  if (!isNew) {
+    const deleteBtn = el("button", { class: "btn small ghost" }, "Delete style");
+    deleteBtn.onclick = async () => {
+      if (!confirm(`Delete frame style "${draft.name}"?`)) return;
+      try {
+        await api(`/api/frame-styles/${encodeURIComponent(draft.id)}`, { method: "DELETE" });
+        await loadFrameStyles();
+        if (shape.styleId === draft.id) shape.styleId = "";
+        layoutState.editingStyleId = null;
+        layoutState.styleDraft = null;
+        renderLayoutProperties();
+        redrawLayout();
+        toast(`Frame style "${draft.name}" deleted`);
+      } catch (error) {
+        toast(`Could not delete style: ${error.message}`, "error");
+      }
+    };
+    buttons.push(deleteBtn);
+  }
+  container.append(el("div", { class: "row" }, ...buttons));
+  panel.append(container);
+}
+
 function renderLayoutProperties() {
   const panel = $("layout-properties");
   if (!panel) return;
@@ -300,16 +500,30 @@ function renderLayoutProperties() {
     redrawLayout();
   }
 
+  const anchorSelect = el("select");
+  anchorSelect.append(el("option", { value: "0" }, "None (absolute)"));
+  for (let i = 1; i <= page.captures; i++) {
+    if (shape.type === "capture" && shape.index === i) continue; // no self-anchor
+    anchorSelect.append(el("option", { value: String(i) }, `Slot ${i}`));
+  }
+  anchorSelect.value = String(shape.anchor || 0);
+  anchorSelect.onchange = () => {
+    update({ anchor: parseInt(anchorSelect.value, 10) });
+    renderLayoutProperties();
+  };
+  panel.append(field("Anchor", anchorSelect));
+
+  const anchored = !!shape.anchor;
   panel.append(
     el(
       "div",
       { class: "designer-numeric-grid" },
-      numberField("X %", shape.x * 100, 0.1, (v) => update({ x: v / 100 })),
-      numberField("Y %", shape.y * 100, 0.1, (v) => update({ y: v / 100 })),
-      numberField("W %", shape.width * 100, 0.1, (v) => update({ width: v / 100 })),
-      numberField("H %", shape.height * 100, 0.1, (v) => update({ height: v / 100 }))
+      numberField(anchored ? "Offset X %" : "X %", shape.x * 100, 0.1, (v) => update({ x: v / 100 })),
+      numberField(anchored ? "Offset Y %" : "Y %", shape.y * 100, 0.1, (v) => update({ y: v / 100 })),
+      numberField(anchored ? "Scale W %" : "W %", shape.width * 100, 0.1, (v) => update({ width: v / 100 })),
+      numberField(anchored ? "Scale H %" : "H %", shape.height * 100, 0.1, (v) => update({ height: v / 100 }))
     ),
-    numberField("Rotation °", shape.rotation || 0, 1, (v) => update({ rotation: v }))
+    numberField(anchored ? "Extra rotation °" : "Rotation °", shape.rotation || 0, 1, (v) => update({ rotation: v }))
   );
 
   if (shape.type === "capture") {
@@ -339,6 +553,57 @@ function renderLayoutProperties() {
       })
     );
     panel.append(field("Snap to ratio", ratioRow));
+  }
+
+  if (shape.type === FRAME) {
+    const styleSelect = el("select");
+    styleSelect.append(el("option", { value: "" }, "No style selected"));
+    for (const style of layoutState.frameStyles) styleSelect.append(el("option", { value: style.id }, style.name));
+    styleSelect.value = shape.styleId || "";
+    styleSelect.onchange = () => update({ styleId: styleSelect.value });
+
+    const styleRow = el("div", { class: "row" }, styleSelect);
+    if (shape.styleId) {
+      const editBtn = el("button", { class: "btn small ghost" }, "Edit style…");
+      editBtn.onclick = () => {
+        const existing = findFrameStyle(shape.styleId);
+        if (!existing) return;
+        layoutState.styleDraft = { ...existing };
+        layoutState.editingStyleId = layoutState.styleDraft.id;
+        renderLayoutProperties();
+      };
+      styleRow.append(editBtn);
+    }
+    const newBtn = el("button", { class: "btn small ghost" }, "+ New style…");
+    newBtn.onclick = () => {
+      layoutState.styleDraft = {
+        id: makeStyleId(),
+        name: "New style",
+        kind: "vector",
+        color: "#000000",
+        borderWidth: 0.01,
+        radius: 0.03,
+        asset: "",
+        opacity: 1,
+      };
+      layoutState.editingStyleId = layoutState.styleDraft.id;
+      renderLayoutProperties();
+    };
+    styleRow.append(newBtn);
+    panel.append(field("Style", styleRow));
+
+    if (layoutState.editingStyleId && layoutState.styleDraft) {
+      const isNew = !findFrameStyle(layoutState.styleDraft.id);
+      renderFrameStyleEditor(panel, shape, layoutState.styleDraft, isNew);
+    }
+
+    const selectedStyle = findFrameStyle(shape.styleId);
+    if (selectedStyle && selectedStyle.kind === "image") {
+      const lockInput = el("input", { type: "checkbox" });
+      lockInput.checked = shape.lockAspect !== false;
+      lockInput.onchange = () => update({ lockAspect: lockInput.checked });
+      panel.append(field("Lock aspect", el("label", { class: "toggle" }, lockInput, el("span", { class: "slider" }))));
+    }
   }
 
   const forwardBtn = el("button", { class: "btn small ghost", title: "Bring forward" }, "↑ Forward");
@@ -455,7 +720,26 @@ function renderLayoutToolbar() {
     });
   };
 
-  bar.append(captureBtn, text1Btn, text2Btn, imageBtn);
+  const frameBtn = el("button", { class: "btn small" }, "+ Frame");
+  frameBtn.disabled = !page;
+  frameBtn.onclick = () => {
+    page.shapes.push({
+      type: FRAME,
+      index: 0,
+      styleId: "",
+      anchor: 0,
+      x: 0.3,
+      y: 0.3,
+      width: 0.3,
+      height: 0.3,
+      rotation: 0,
+      lockAspect: true,
+    });
+    renderLayoutToolbar();
+    redrawLayout();
+  };
+
+  bar.append(captureBtn, text1Btn, text2Btn, imageBtn, frameBtn);
 }
 
 /* ----------------------------------------------------------- save / load */
@@ -705,6 +989,14 @@ function buildLayoutZoomControls() {
 
 /* ------------------------------------------------------------------- init */
 
+async function loadFrameStyles() {
+  try {
+    layoutState.frameStyles = (await api("/api/frame-styles")).styles;
+  } catch (error) {
+    layoutState.frameStyles = [];
+  }
+}
+
 function renderLayoutPage() {
   $("section-title").textContent = "Layout designer";
   $("section-hint").textContent = "Design the physical print layout: capture slots, footer texts and decorative images per page.";
@@ -756,4 +1048,8 @@ function renderLayoutPage() {
 
   renderLayoutToolbar();
   renderLayoutProperties();
+  loadFrameStyles().then(() => {
+    renderLayoutProperties();
+    redrawLayout();
+  });
 }

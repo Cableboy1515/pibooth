@@ -19,6 +19,18 @@ const LAYOUT_PAPER_FORMATS = {
 
 const LAYOUT_CANVAS_HEIGHT = 520;
 
+//: Common photo/camera aspect ratios offered for the "snap" capture-slot
+//: sizing shortcut, as width/height ratios.
+const PHOTO_ASPECT_RATIOS = {
+  "1:1": 1,
+  "4:3": 4 / 3,
+  "3:2": 3 / 2,
+  "16:9": 16 / 9,
+  "3:4": 3 / 4,
+  "2:3": 2 / 3,
+  "9:16": 9 / 16,
+};
+
 const layoutState = {
   templateName: "",
   paper: "4x6",
@@ -243,6 +255,34 @@ function moveShapeZOrder(page, index, delta) {
   return target;
 }
 
+/** Snap a shape's box to a target width/height ratio, keeping its center
+ * fixed and shrinking (never growing) to fit within its current bounding
+ * box. Aspect ratios are only meaningful in pixel space — the canvas isn't
+ * generally square, so comparing width/height fractions directly would be
+ * wrong — hence converting through `layoutCanvasSize()` and back.
+ */
+function snapShapeToRatio(shape, ratio) {
+  const size = layoutCanvasSize();
+  const boxW = shape.width * size.width;
+  const boxH = shape.height * size.height;
+  const centerX = (shape.x + shape.width / 2) * size.width;
+  const centerY = (shape.y + shape.height / 2) * size.height;
+
+  let newW, newH;
+  if (boxW / boxH > ratio) {
+    newH = boxH;
+    newW = boxH * ratio;
+  } else {
+    newW = boxW;
+    newH = boxW / ratio;
+  }
+
+  shape.width = newW / size.width;
+  shape.height = newH / size.height;
+  shape.x = (centerX - newW / 2) / size.width;
+  shape.y = (centerY - newH / 2) / size.height;
+}
+
 function renderLayoutProperties() {
   const panel = $("layout-properties");
   if (!panel) return;
@@ -284,6 +324,21 @@ function renderLayoutProperties() {
       redrawLayout();
     };
     panel.append(field("Capture index", select));
+
+    const ratioRow = el(
+      "div",
+      { class: "ratio-snap-row" },
+      ...Object.entries(PHOTO_ASPECT_RATIOS).map(([label, ratio]) => {
+        const btn = el("button", { class: "btn small ghost", title: `Snap to ${label}` }, label);
+        btn.onclick = () => {
+          snapShapeToRatio(shape, ratio);
+          renderLayoutProperties();
+          redrawLayout();
+        };
+        return btn;
+      })
+    );
+    panel.append(field("Snap to ratio", ratioRow));
   }
 
   const forwardBtn = el("button", { class: "btn small ghost", title: "Bring forward" }, "↑ Forward");

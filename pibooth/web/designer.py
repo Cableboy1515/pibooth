@@ -105,17 +105,32 @@ def _render_image_element(canvas: Image.Image, element: dict[str, Any], assets_d
 
 
 def _render_frame_element(canvas: Image.Image, element: dict[str, Any], assets_dir: str) -> None:
-    """Draw a rounded-rectangle frame outline onto the canvas."""
+    """Alpha-composite a rounded-rectangle frame outline onto the canvas."""
     width, height = canvas.size
     min_dim = min(width, height)
-    inset = float(element.get("inset", 0.02)) * min_dim
-    outline_width = max(1, int(float(element.get("width", 0.01)) * min_dim))
+    box_width = max(1, int(float(element.get("width", 0.9)) * width))
+    box_height = max(1, int(float(element.get("height", 0.9)) * height))
+    outline_width = max(1, int(float(element.get("borderWidth", 0.01)) * min_dim))
     radius = max(0, int(float(element.get("radius", 0.03)) * min_dim))
     color = _hex_to_rgb(str(element.get("color", "#000000")))
 
-    draw = ImageDraw.Draw(canvas)
-    box = (inset, inset, width - inset, height - inset)
+    # Draw on a dedicated transparent layer sized to the box (padded by the
+    # outline width, since the stroke straddles the box edge) so it can be
+    # rotated with expand=True before being composited on the real canvas.
+    pad = outline_width
+    layer = Image.new("RGBA", (box_width + 2 * pad, box_height + 2 * pad), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(layer)
+    box = (pad, pad, pad + box_width, pad + box_height)
     draw.rounded_rectangle(box, radius=radius, outline=(*color, 255), width=outline_width)
+
+    rotation = float(element.get("rotation", 0))
+    if rotation:
+        layer = layer.rotate(rotation, expand=True, resample=Resampling.BICUBIC)
+
+    x = float(element.get("x", 0.5)) * width
+    y = float(element.get("y", 0.5)) * height
+    origin = (int(x - layer.width / 2), int(y - layer.height / 2))
+    canvas.alpha_composite(layer, origin)
 
 
 _RENDERERS = {

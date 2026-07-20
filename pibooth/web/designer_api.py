@@ -37,8 +37,8 @@ _ELEMENT_SCHEMA: dict[str, dict[str, list[str]]] = {
         "numeric": ["x", "y", "width", "rotation", "opacity"],
     },
     "frame": {
-        "required": ["color", "width", "radius", "inset"],
-        "numeric": ["width", "radius", "inset"],
+        "required": ["color", "borderWidth", "radius", "x", "y", "width", "height"],
+        "numeric": ["borderWidth", "radius", "x", "y", "width", "height", "rotation"],
     },
 }
 

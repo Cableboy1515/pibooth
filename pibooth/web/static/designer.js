@@ -126,7 +126,31 @@ function newElement(type) {
   if (type === "image") {
     return { type: "image", asset: "", x: 0.5, y: 0.5, width: 0.2, rotation: 0, opacity: 1, layer: "overlay" };
   }
-  return { type: "frame", color: "#d4af37", width: 0.01, radius: 0.03, inset: 0.02, layer: "overlay" };
+  return { type: "frame", color: "#d4af37", borderWidth: 0.01, radius: 0.03, x: 0.5, y: 0.5, width: 0.9, height: 0.9, rotation: 0, layer: "overlay" };
+}
+
+/** Old saved designs stored frames as a uniform inset shrinking the whole
+ * canvas (always centered, no rotation) instead of a free box. Detect that
+ * shape by the presence of `inset` (new frames never write one) and convert
+ * it to the equivalent x/y/width/height/rotation box for `canvasSize`, so it
+ * renders pixel-identical to before and is then freely draggable/resizable.
+ */
+function migrateLegacyFrame(element, canvasSize) {
+  if (element.type !== "frame" || element.inset === undefined) return element;
+  const minDim = Math.min(canvasSize.width, canvasSize.height);
+  const insetPx = (element.inset || 0) * minDim;
+  return {
+    type: "frame",
+    color: element.color || "#000000",
+    layer: elementLayer(element),
+    borderWidth: element.width != null ? element.width : 0.01,
+    radius: element.radius != null ? element.radius : 0.03,
+    x: 0.5,
+    y: 0.5,
+    width: Math.max(0.01, 1 - (2 * insetPx) / canvasSize.width),
+    height: Math.max(0.01, 1 - (2 * insetPx) / canvasSize.height),
+    rotation: 0,
+  };
 }
 
 /** An element's layer defaults to "overlay" when absent (older saved
@@ -195,16 +219,10 @@ function elementBounds(ctx, element, canvasSize) {
     const height = Math.max(1, width * ratio);
     return { cx, cy, width, height, rotation: element.rotation || 0 };
   }
-  // frame: bounding box is the whole canvas inset area
-  const minDim = Math.min(canvasSize.width, canvasSize.height);
-  const inset = element.inset * minDim;
-  return {
-    cx: canvasSize.width / 2,
-    cy: canvasSize.height / 2,
-    width: canvasSize.width - 2 * inset,
-    height: canvasSize.height - 2 * inset,
-    rotation: 0,
-  };
+  // frame: a free box, same shape as image
+  const width = Math.max(1, element.width * canvasSize.width);
+  const height = Math.max(1, element.height * canvasSize.height);
+  return { cx, cy, width, height, rotation: element.rotation || 0 };
 }
 
 function drawElement(ctx, element, canvasSize) {
@@ -234,13 +252,16 @@ function drawElement(ctx, element, canvasSize) {
     }
   } else if (element.type === "frame") {
     const minDim = Math.min(canvasSize.width, canvasSize.height);
-    const inset = element.inset * minDim;
-    const lineWidth = Math.max(1, element.width * minDim);
+    const width = Math.max(1, element.width * canvasSize.width);
+    const height = Math.max(1, element.height * canvasSize.height);
+    const lineWidth = Math.max(1, element.borderWidth * minDim);
     const radius = Math.max(0, element.radius * minDim);
+    ctx.translate(element.x * canvasSize.width, element.y * canvasSize.height);
+    ctx.rotate(((element.rotation || 0) * Math.PI) / 180);
     ctx.strokeStyle = element.color || "#000000";
     ctx.lineWidth = lineWidth;
     ctx.beginPath();
-    ctx.roundRect(inset, inset, canvasSize.width - 2 * inset, canvasSize.height - 2 * inset, radius);
+    ctx.roundRect(-width / 2, -height / 2, width, height, radius);
     ctx.stroke();
   }
   ctx.restore();
@@ -338,11 +359,8 @@ function loadSampleBackdrop() {
 
 /* ------------------------------------------------------ CanvasEditor adapter */
 
-/** Text/image elements are center-based; frames have no canvas position and
- * are not selectable on the canvas (list-selected only).
- */
+/** All element types are center-based on the canvas. */
 function elementItemRect(element) {
-  if (element.type === "frame") return null;
   const size = designerCanvasSize();
   const ctx = $("designer-canvas").getContext("2d");
   const bounds = elementBounds(ctx, element, size);
@@ -358,7 +376,9 @@ function elementItemRect(element) {
 
 /** Text has no independently stored width (it is measured from the font
  * size), so a resize drag scales `size` by however much the drag changed
- * the measured height. Images store `width` directly.
+ * the measured height. Images store `width` directly (height follows the
+ * asset's own aspect ratio). Frames store both `width` and `height`
+ * independently, so each edge/corner handle resizes only the axes it drags.
  */
 function setElementItemRect(element, rect) {
   const size = designerCanvasSize();
@@ -370,6 +390,9 @@ function setElementItemRect(element, rect) {
     element.size = Math.max(0.005, element.size * scale);
   } else if (element.type === "image") {
     element.width = Math.max(0.01, rect.w);
+  } else if (element.type === "frame") {
+    element.width = Math.max(0.01, rect.w);
+    element.height = Math.max(0.01, rect.h);
   }
   element.x = rect.x;
   element.y = rect.y;
@@ -608,9 +631,12 @@ function renderPropertiesPanel() {
     colorInput.oninput = () => update({ color: colorInput.value });
     panel.append(
       field("Color", colorInput),
-      rangeField("Line width", element.width, 0.001, 0.05, 0.001, (value) => update({ width: value })),
+      rangeField("Border width", element.borderWidth, 0.001, 0.05, 0.001, (value) => update({ borderWidth: value })),
       rangeField("Radius", element.radius, 0, 0.2, 0.005, (value) => update({ radius: value })),
-      rangeField("Inset", element.inset, 0, 0.2, 0.005, (value) => update({ inset: value }))
+      numberField("Width %", element.width * 100, 0.1, (v) => update({ width: v / 100 })),
+      numberField("Height %", element.height * 100, 0.1, (v) => update({ height: v / 100 })),
+      rangeField("Rotation", element.rotation || 0, -180, 180, 1, (value) => update({ rotation: value })),
+      ...positionFields(element, update)
     );
   }
 }
@@ -712,9 +738,16 @@ async function loadDesignIntoEditor(name) {
     const spec = await api(`/api/designs/${encodeURIComponent(name)}`);
     designerState.name = spec.name || name;
     designerState.orientation = spec.orientation === "landscape" ? "landscape" : "portrait";
-    designerState.elements = Array.isArray(spec.elements) ? spec.elements : [];
     designerState.selected = -1;
     designerState.template = spec.template || "";
+    // Resolve geometry for this design's template/orientation first (safe to
+    // call before the canvas DOM exists) so legacy frames migrate against
+    // the right canvas size, not whatever geometry was active before.
+    await refreshDesignerGeometryAndGuides();
+    const size = designerCanvasSize();
+    designerState.elements = (Array.isArray(spec.elements) ? spec.elements : []).map((element) =>
+      migrateLegacyFrame(element, size)
+    );
     renderDesignerPage();
     toast(`Loaded design "${designerState.name}"`);
   } catch (error) {

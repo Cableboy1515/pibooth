@@ -386,6 +386,7 @@ input[type="color"] {
 
 /* --------------------------------------------------------------- designer */
 .designer-layout { display: flex; gap: 24px; flex-wrap: wrap; align-items: flex-start; }
+.ratio-snap-row { display: flex; flex-wrap: wrap; gap: 6px; }
 
 .designer-canvas-wrap {
   flex: 0 0 auto;

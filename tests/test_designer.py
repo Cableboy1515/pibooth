@@ -86,20 +86,65 @@ def test_render_frame_element_draws_border(tmp_path):
     spec = {
         "name": "frame-test",
         "orientation": "portrait",
-        "elements": [{"type": "frame", "color": "#00ff00", "width": 0.02, "radius": 0.0, "inset": 0.05}],
+        "elements": [
+            {
+                "type": "frame",
+                "color": "#00ff00",
+                "borderWidth": 0.02,
+                "radius": 0.0,
+                "x": 0.5,
+                "y": 0.5,
+                "width": 0.9,
+                "height": 0.9,
+                "rotation": 0,
+            }
+        ],
     }
     image = render_design(spec, str(tmp_path), (1800, 2700))
-    min_dim = min(image.size)
-    inset = int(0.05 * min_dim)
+    top_edge = int(0.5 * image.height - 0.5 * 0.9 * image.height)
     # Sample along the top border, away from the rounded corners
     x = image.width // 2
     found = False
-    for y in range(inset - 5, inset + 15):
+    for y in range(top_edge - 5, top_edge + 15):
         pixel = image.getpixel((x, y))
         if pixel[3] > 0:
             found = True
             assert pixel[1] > pixel[0] and pixel[1] > pixel[2]  # greenish
     assert found
+
+
+def test_render_frame_element_rotates(tmp_path):
+    # A wide (non-square), unrotated frame has border pixels along its full
+    # width at the vertical center but none near the corners (well inside
+    # the box, above/below the border, given the box's aspect ratio); at
+    # rotation=90 that same physical direction now has border where the
+    # unrotated one didn't, proving the rotation actually applies.
+    size = (1800, 2700)
+    base = {
+        "type": "frame",
+        "color": "#ff00ff",
+        "borderWidth": 0.01,
+        "radius": 0.0,
+        "x": 0.5,
+        "y": 0.5,
+        "width": 0.8,
+        "height": 0.2,
+    }
+    unrotated = render_design(
+        {"name": "r0", "orientation": "portrait", "elements": [{**base, "rotation": 0}]}, str(tmp_path), size
+    )
+    rotated = render_design(
+        {"name": "r90", "orientation": "portrait", "elements": [{**base, "rotation": 90}]}, str(tmp_path), size
+    )
+    # Sample a small neighborhood on the unrotated frame's left border —
+    # well outside the rotated frame's (now tall, narrow) footprint.
+    x, y = int(0.5 * size[0] - 0.5 * 0.8 * size[0]), size[1] // 2
+
+    def alphas(img):
+        return [img.getpixel((px, py))[3] for px in range(x - 3, x + 3) for py in range(y - 10, y + 10)]
+
+    assert any(alpha > 0 for alpha in alphas(unrotated))
+    assert all(alpha == 0 for alpha in alphas(rotated))
 
 
 def test_render_unknown_element_type_ignored(tmp_path):
@@ -203,7 +248,17 @@ def test_designs_create_list_get_roundtrip(client, web_cfg):
                 "align": "center",
             },
             {"type": "image", "asset": "logo.png", "x": 0.85, "y": 0.08, "width": 0.2, "rotation": 0, "opacity": 1.0},
-            {"type": "frame", "color": "#d4af37", "width": 0.01, "radius": 0.03, "inset": 0.02},
+            {
+                "type": "frame",
+                "color": "#d4af37",
+                "borderWidth": 0.01,
+                "radius": 0.03,
+                "x": 0.5,
+                "y": 0.5,
+                "width": 0.9,
+                "height": 0.9,
+                "rotation": 0,
+            },
         ],
     }
 
@@ -316,7 +371,18 @@ def test_designs_assign_without_background_leaves_config_untouched(client, web_c
     spec = {
         "name": "overlay-only",
         "orientation": "portrait",
-        "elements": [{"type": "frame", "color": "#000000", "width": 0.01, "radius": 0.0, "inset": 0.02}],
+        "elements": [
+            {
+                "type": "frame",
+                "color": "#000000",
+                "borderWidth": 0.01,
+                "radius": 0.0,
+                "x": 0.5,
+                "y": 0.5,
+                "width": 0.9,
+                "height": 0.9,
+            }
+        ],
     }
     response = client.post("/api/designs", json={"spec": spec, "assign": True})
     assert response.status_code == 200
@@ -364,7 +430,17 @@ def test_designs_invalid_layer_value(client):
         "name": "bad-layer",
         "orientation": "portrait",
         "elements": [
-            {"type": "frame", "color": "#000000", "width": 0.01, "radius": 0.0, "inset": 0.02, "layer": "sideways"}
+            {
+                "type": "frame",
+                "color": "#000000",
+                "borderWidth": 0.01,
+                "radius": 0.0,
+                "x": 0.5,
+                "y": 0.5,
+                "width": 0.9,
+                "height": 0.9,
+                "layer": "sideways",
+            }
         ],
     }
     response = client.post("/api/designs", json={"spec": spec})
@@ -388,6 +464,19 @@ def test_designs_invalid_spec_elements_not_list(client):
 
 def test_designs_invalid_element_missing_field(client):
     spec = {"name": "bad", "orientation": "portrait", "elements": [{"type": "text", "text": "hi"}]}
+    response = client.post("/api/designs", json={"spec": spec})
+    assert response.status_code == 400
+    assert "field" in response.get_json()["description"].lower()
+
+
+def test_designs_invalid_frame_missing_width_height(client):
+    # A frame is now a free box like image/text elements — width/height are
+    # required, not derived from an inset.
+    spec = {
+        "name": "bad-frame",
+        "orientation": "portrait",
+        "elements": [{"type": "frame", "color": "#000000", "borderWidth": 0.01, "radius": 0.0, "x": 0.5, "y": 0.5}],
+    }
     response = client.post("/api/designs", json={"spec": spec})
     assert response.status_code == 400
     assert "field" in response.get_json()["description"].lower()

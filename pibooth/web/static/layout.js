@@ -251,7 +251,11 @@ function drawLayoutShape(ctx, shape, page, size) {
       ctx.setLineDash([]);
     }
   } else if (shape.type === FRAME) {
-    const style = findFrameStyle(shape.styleId);
+    // While a style is being drafted for this shape, preview the draft live
+    // instead of the last-saved style — otherwise slider edits show no change
+    // until "Save style" is clicked.
+    const isDraftingThisShape = layoutState.styleDraft && page.shapes[layoutState.selectedShapeIndex] === shape;
+    const style = isDraftingThisShape ? layoutState.styleDraft : findFrameStyle(shape.styleId);
     if (!style) {
       ctx.strokeStyle = "#cccccc";
       ctx.setLineDash([2, 4]);
@@ -411,17 +415,27 @@ function renderFrameStyleEditor(panel, shape, draft, isNew) {
   kindSelect.onchange = () => {
     draft.kind = kindSelect.value;
     renderLayoutProperties();
+    redrawLayout();
   };
 
   container.append(field("Name", nameInput), field("Kind", kindSelect));
 
   if (draft.kind === "vector") {
     const colorInput = el("input", { type: "color", value: draft.color || "#000000" });
-    colorInput.oninput = () => (draft.color = colorInput.value);
+    colorInput.oninput = () => {
+      draft.color = colorInput.value;
+      redrawLayout();
+    };
     container.append(
       field("Color", colorInput),
-      rangeField("Border width", draft.borderWidth, 0.001, 0.2, 0.001, (v) => (draft.borderWidth = v)),
-      rangeField("Radius", draft.radius, 0, 0.5, 0.005, (v) => (draft.radius = v))
+      rangeField("Border width", draft.borderWidth, 0.001, 0.2, 0.001, (v) => {
+        draft.borderWidth = v;
+        redrawLayout();
+      }),
+      rangeField("Radius", draft.radius, 0, 0.5, 0.005, (v) => {
+        draft.radius = v;
+        redrawLayout();
+      })
     );
   } else {
     const assetName = el("span", { class: "imgpick-name" }, draft.asset || "No image selected");
@@ -431,10 +445,14 @@ function renderFrameStyleEditor(panel, shape, draft, isNew) {
         const name = basename(path);
         draft.asset = name;
         assetName.textContent = name;
+        redrawLayout();
       });
     container.append(
       field("Image", el("div", { class: "row" }, chooseBtn, assetName)),
-      rangeField("Opacity", draft.opacity == null ? 1 : draft.opacity, 0, 1, 0.05, (v) => (draft.opacity = v))
+      rangeField("Opacity", draft.opacity == null ? 1 : draft.opacity, 0, 1, 0.05, (v) => {
+        draft.opacity = v;
+        redrawLayout();
+      })
     );
   }
 
@@ -458,6 +476,7 @@ function renderFrameStyleEditor(panel, shape, draft, isNew) {
     layoutState.editingStyleId = null;
     layoutState.styleDraft = null;
     renderLayoutProperties();
+    redrawLayout();
   };
   const buttons = [saveBtn, cancelBtn];
   if (!isNew) {
@@ -571,6 +590,7 @@ function renderLayoutProperties() {
         layoutState.styleDraft = { ...existing };
         layoutState.editingStyleId = layoutState.styleDraft.id;
         renderLayoutProperties();
+        redrawLayout();
       };
       styleRow.append(editBtn);
     }
@@ -588,6 +608,7 @@ function renderLayoutProperties() {
       };
       layoutState.editingStyleId = layoutState.styleDraft.id;
       renderLayoutProperties();
+      redrawLayout();
     };
     styleRow.append(newBtn);
     panel.append(field("Style", styleRow));

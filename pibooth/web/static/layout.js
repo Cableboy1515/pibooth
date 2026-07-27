@@ -4,7 +4,15 @@
 /* Register after the overlay designer (see designer.js CUSTOM_PAGES.push);
  * script order in index.html guarantees this entry lands last.
  */
-CUSTOM_PAGES.push({ id: "LAYOUT", label: "Layout designer", icon: "📐", render: renderLayoutPage, group: "design", order: 0 });
+CUSTOM_PAGES.push({
+  id: "LAYOUT",
+  label: "Layout designer",
+  icon: "📐",
+  render: renderLayoutPage,
+  group: "design",
+  order: 0,
+  wide: true,
+});
 
 //: Mirrors pibooth.printer.PAPER_FORMATS (inches, width x height in portrait).
 const LAYOUT_PAPER_FORMATS = {
@@ -17,7 +25,12 @@ const LAYOUT_PAPER_FORMATS = {
   custom: null,
 };
 
-const LAYOUT_CANVAS_HEIGHT = 520;
+//: Internal (backing-store) height of the layout canvas in px. The canvas is
+//: displayed CSS-scaled to fit its column, so this only sets the drawing
+//: resolution — high enough to stay crisp when the designer is given the full
+//: window width. Only the width/height *ratio* is semantically meaningful
+//: (see snapShapeToRatio), and that is preserved for any value.
+const LAYOUT_CANVAS_HEIGHT = 1040;
 
 //: Shape kinds (mirrors pibooth.pictures.template's CAPTURE/TEXT/IMAGE/FRAME).
 const FRAME = "frame";
@@ -47,6 +60,10 @@ const layoutState = {
   frameStyles: [], // /api/frame-styles payload
   editingStyleId: null, // id of the frame style currently expanded for editing in the properties panel, or null
   styleDraft: null, // in-progress edits for layoutState.editingStyleId, applied on Save
+  // Live references to the geometry inputs rendered by renderLayoutProperties,
+  // so a canvas drag can write values straight into them instead of rebuilding
+  // the whole panel on every pointer move. See syncLayoutPropertyInputs().
+  propertyInputs: null, // {shape, x, y, width, height, rotation} or null
 };
 
 /* ------------------------------------------------------------------ pages */
@@ -114,6 +131,81 @@ function storeAnchoredRect(shape, anchorShape, resolved) {
   shape.x = anchorShape.width ? (cx - acx) / anchorShape.width : 0;
   shape.y = anchorShape.height ? (cy - acy) / anchorShape.height : 0;
   shape.rotation = resolved.rotation - (anchorShape.rotation || 0);
+}
+
+/** Sort key placing page.shapes[index] next to the capture slot it's anchored
+ * to: the chain of array positions from the anchor root down to the shape,
+ * with the shape's own position repeated at the end so a child listed before
+ * its parent still draws behind it. A dangling anchor or a cycle degrades to
+ * the shape's own position. Mirrors _draw_order_key() in
+ * pibooth/pictures/template.py.
+ */
+function layoutDrawOrderKey(index, page) {
+  const chain = [index];
+  const seen = new Set([index]);
+  let current = page.shapes[index];
+  while (current && current.anchor) {
+    const parent = page.shapes.findIndex((s) => s.type === "capture" && s.index === current.anchor);
+    if (parent < 0 || seen.has(parent)) break;
+    chain.unshift(parent);
+    seen.add(parent);
+    current = page.shapes[parent];
+  }
+  return chain.concat(index);
+}
+
+/** page.shapes in the order they must be drawn — anchored shapes grouped with
+ * the capture slot they're anchored to, so a frame on slot 1 is obscured by
+ * slots 2 and 3 exactly as slot 1 itself is. Mirrors resolve_draw_order() in
+ * pibooth/pictures/template.py; the two MUST agree or the designer preview
+ * stops matching the printed picture.
+ */
+function layoutDrawOrder(page) {
+  if (!page) return [];
+  const keyed = page.shapes.map((shape, index) => ({ shape, key: layoutDrawOrderKey(index, page) }));
+  keyed.sort((a, b) => {
+    for (let i = 0; i < Math.min(a.key.length, b.key.length); i++) {
+      if (a.key[i] !== b.key[i]) return a.key[i] - b.key[i];
+    }
+    return a.key.length - b.key.length;
+  });
+  return keyed.map((entry) => entry.shape);
+}
+
+/** Anchor-relative geometry that makes a shape exactly cover its anchor slot:
+ * centered on it (offset 0), at 100% of its width/height, with no rotation of
+ * its own. This is the natural starting point for a frame. */
+const ANCHOR_FILL_RECT = { x: 0, y: 0, width: 1, height: 1, rotation: 0 };
+
+/** Change `shape`'s anchor, converting its geometry so the change isn't a
+ * jump — x/y/width/height mean completely different things either side of it
+ * (see resolveShapeRect), so writing the anchor alone would teleport and
+ * resize the shape.
+ *
+ * A frame snaps to cover its new slot: anchoring a frame means "frame this
+ * photo", and 100% is a round number to adjust from. Anything else keeps the
+ * rect it already occupies on the page, as does un-anchoring.
+ */
+function setShapeAnchor(page, shape, anchor) {
+  if ((shape.anchor || 0) === anchor) return;
+  const resolved = resolveShapeRect(shape, page); // where it sits right now
+  const target = anchor ? findCaptureShape(page, anchor) : null;
+
+  shape.anchor = anchor;
+  if (anchor && target && shape.type === FRAME) {
+    Object.assign(shape, ANCHOR_FILL_RECT);
+  } else if (anchor && target) {
+    storeAnchoredRect(shape, target, resolved);
+  } else {
+    // Absolute again (or a slot that doesn't exist): keep the current rect.
+    Object.assign(shape, {
+      x: resolved.x,
+      y: resolved.y,
+      width: resolved.width,
+      height: resolved.height,
+      rotation: resolved.rotation,
+    });
+  }
 }
 
 function pageSizeFor(paper, dpi, orientation) {
@@ -290,7 +382,7 @@ function drawLayoutScene(ctx) {
   ctx.fillRect(0, 0, size.width, size.height);
   const page = activeLayoutPage();
   if (!page) return;
-  for (const shape of page.shapes) drawLayoutShape(ctx, shape, page, size);
+  for (const shape of layoutDrawOrder(page)) drawLayoutShape(ctx, shape, page, size);
 }
 
 function redrawLayout() {
@@ -302,6 +394,10 @@ function resizeLayoutCanvas(canvas) {
   canvas.width = size.width;
   canvas.height = size.height;
   canvas.style.aspectRatio = `${size.width} / ${size.height}`;
+  // Published for the CSS that caps the canvas wrapper by height budget —
+  // see `.layout-canvas-col .designer-canvas-stack` in app.css.
+  const stack = canvas.closest(".designer-canvas-stack");
+  if (stack) stack.style.setProperty("--page-ratio", String(size.width / size.height));
 }
 
 /* ------------------------------------------------------ CanvasEditor adapter */
@@ -330,6 +426,7 @@ function onLayoutSelect(shape) {
   const page = activeLayoutPage();
   layoutState.selectedShapeIndex = page && shape ? page.shapes.indexOf(shape) : -1;
   renderLayoutProperties();
+  renderLayoutToolbar(); // the "+ Frame" button targets the selected slot
 }
 
 function deleteLayoutShape(index) {
@@ -350,11 +447,53 @@ function deleteLayoutShape(index) {
 
 /* ------------------------------------------------------------- properties */
 
+/** Array index of the capture slot `shape` is anchored to, or -1 if it isn't
+ * anchored (or the anchor target no longer exists). */
+function shapeParentIndex(page, shape) {
+  if (!shape.anchor) return -1;
+  return page.shapes.findIndex((s) => s.type === "capture" && s.index === shape.anchor && s !== shape);
+}
+
+/** The shapes `shape` can be reordered against, as array indices in ascending
+ * order. Because draw order is derived from anchoring, a shape can only move
+ * within its own group: an anchored shape moves among its siblings and its
+ * anchor slot (so it can be sent behind the photo), while an unanchored shape
+ * moves among the other unanchored shapes — taking everything anchored to it
+ * along for the ride.
+ */
+function shapeZOrderPeers(page, shape) {
+  const parent = shapeParentIndex(page, shape);
+  const peers = [];
+  page.shapes.forEach((other, i) => {
+    if (other === shape) peers.push(i);
+    else if (parent < 0 ? shapeParentIndex(page, other) < 0 : i === parent || shapeParentIndex(page, other) === parent) {
+      peers.push(i);
+    }
+  });
+  return peers;
+}
+
+/** Move a shape one step through its z-order peers. Returns its new array
+ * index (unchanged if it's already at the end of its group). */
 function moveShapeZOrder(page, index, delta) {
-  const target = index + delta;
-  if (target < 0 || target >= page.shapes.length) return index;
-  [page.shapes[index], page.shapes[target]] = [page.shapes[target], page.shapes[index]];
-  return target;
+  const shape = page.shapes[index];
+  const peers = shapeZOrderPeers(page, shape);
+  const at = peers.indexOf(index);
+  const target = peers[at + delta];
+  if (at < 0 || target === undefined) return index;
+  // Re-insert rather than swap: a shape and its anchor slot can be peers, and
+  // swapping their array positions would move the slot's whole group instead
+  // of just this shape.
+  page.shapes.splice(index, 1);
+  const shifted = target > index ? target - 1 : target;
+  const insertAt = delta > 0 ? shifted + 1 : shifted;
+  page.shapes.splice(insertAt, 0, shape);
+  return insertAt;
+}
+
+function canMoveShapeZOrder(page, index, delta) {
+  const peers = shapeZOrderPeers(page, page.shapes[index]);
+  return peers[peers.indexOf(index) + delta] !== undefined;
 }
 
 /** Snap a shape's box to a target width/height ratio, keeping its center
@@ -502,17 +641,137 @@ function renderFrameStyleEditor(panel, shape, draft, isNew) {
   panel.append(container);
 }
 
+/* ------------------------------------------------------- inspector chrome */
+
+//: Human-readable kind of a shape, for the inspector header.
+function shapeKindLabel(shape) {
+  if (shape.type === "capture") return "Capture slot";
+  if (shape.type === "text") return "Text";
+  if (shape.type === "image") return "Image";
+  if (shape.type === FRAME) return "Frame";
+  return shape.type;
+}
+
+//: Short identifying name of a shape, for the header and the shape list.
+function shapeLabel(shape) {
+  if (shape.type === "capture") return `Slot ${shape.index}`;
+  if (shape.type === "text") return `Text ${shape.index}`;
+  if (shape.type === "image") return shape.asset || "(no image)";
+  if (shape.type === FRAME) {
+    const style = findFrameStyle(shape.styleId);
+    return style ? style.name : "(no style)";
+  }
+  return shape.type;
+}
+
+function renderLayoutInspectorHeader() {
+  const header = $("layout-inspector-header");
+  if (!header) return;
+  const shape = selectedLayoutShape();
+  if (!shape) {
+    header.className = "layout-inspector-header empty";
+    header.replaceChildren("Nothing selected");
+    return;
+  }
+  header.className = "layout-inspector-header";
+  header.replaceChildren(
+    el("span", { class: "layout-inspector-kind" }, shapeKindLabel(shape)),
+    el("span", {}, shapeLabel(shape))
+  );
+}
+
+/** The shape list — the layout page has no other way to reach a shape that is
+ * small, rotated or hidden under another one. Rows follow the effective draw
+ * order (bottom first, matching ↑ Forward / ↓ Backward), with anchored shapes
+ * indented under the capture slot whose layer they share.
+ */
+function renderLayoutShapeList() {
+  const list = $("layout-shape-list");
+  if (!list) return;
+  list.replaceChildren();
+  const page = activeLayoutPage();
+  if (!page || !page.shapes.length) {
+    list.append(el("div", { class: "field-help" }, "No shape yet — add one above the canvas."));
+    return;
+  }
+  const selected = selectedLayoutShape();
+  const rows = el("div", { class: "designer-element-list" });
+  for (const shape of layoutDrawOrder(page)) {
+    const index = page.shapes.indexOf(shape);
+    const depth = layoutDrawOrderKey(index, page).length - 2; // 0 for unanchored
+    const row = el(
+      "div",
+      { class: `designer-element-row${shape === selected ? " active" : ""}` },
+      el("span", { class: "designer-element-label" }, `${shapeKindLabel(shape)} — ${shapeLabel(shape)}`)
+    );
+    if (depth > 0) {
+      row.style.paddingLeft = `${8 + depth * 14}px`;
+      row.title = `Anchored to slot ${shape.anchor} — drawn in that slot's layer`;
+    }
+    // editor.select() sets the canvas selection *and* fires onSelect, which
+    // routes back through onLayoutSelect() to refresh this panel.
+    row.onclick = () => layoutState.editor && layoutState.editor.select(shape);
+    rows.append(row);
+  }
+  list.append(rows);
+}
+
+function selectedLayoutShape() {
+  const page = activeLayoutPage();
+  const index = layoutState.selectedShapeIndex;
+  if (!page || index < 0 || !page.shapes[index]) return null;
+  return page.shapes[index];
+}
+
+/** Push the selected shape's current geometry into the already-rendered
+ * inputs. Called on every pointer move during a canvas drag, where rebuilding
+ * the panel would be wasteful and would blow away focus mid-edit.
+ */
+function syncLayoutPropertyInputs() {
+  const shape = selectedLayoutShape();
+  const refs = layoutState.propertyInputs;
+  if (!shape || !refs || refs.shape !== shape) {
+    renderLayoutProperties();
+    return;
+  }
+  const values = {
+    x: shape.x * 100,
+    y: shape.y * 100,
+    width: shape.width * 100,
+    height: shape.height * 100,
+    rotation: shape.rotation || 0,
+  };
+  for (const [key, value] of Object.entries(values)) {
+    const input = refs[key];
+    // Never fight the field the user is currently typing into.
+    if (!input || input === document.activeElement) continue;
+    input.value = String(Math.round(value * 100) / 100);
+  }
+}
+
+/** numberField() wrapper that also records the input on
+ * layoutState.propertyInputs under `key`, for syncLayoutPropertyInputs(). */
+function trackedNumberField(key, labelText, value, step, onInput) {
+  const node = numberField(labelText, value, step, onInput);
+  layoutState.propertyInputs[key] = node.querySelector("input");
+  return node;
+}
+
 function renderLayoutProperties() {
   const panel = $("layout-properties");
   if (!panel) return;
   panel.replaceChildren();
+  layoutState.propertyInputs = null;
+  renderLayoutInspectorHeader();
+  renderLayoutShapeList();
   const page = activeLayoutPage();
   const index = layoutState.selectedShapeIndex;
   if (!page || index < 0 || !page.shapes[index]) {
-    panel.append(el("div", { class: "field-help" }, "Select a shape to edit its properties."));
+    panel.append(el("div", { class: "field-help" }, "Select a shape on the canvas or in the list above."));
     return;
   }
   const shape = page.shapes[index];
+  layoutState.propertyInputs = { shape };
 
   function update(patch) {
     Object.assign(shape, patch);
@@ -527,7 +786,8 @@ function renderLayoutProperties() {
   }
   anchorSelect.value = String(shape.anchor || 0);
   anchorSelect.onchange = () => {
-    update({ anchor: parseInt(anchorSelect.value, 10) });
+    setShapeAnchor(page, shape, parseInt(anchorSelect.value, 10));
+    redrawLayout();
     renderLayoutProperties();
   };
   panel.append(field("Anchor", anchorSelect));
@@ -537,12 +797,14 @@ function renderLayoutProperties() {
     el(
       "div",
       { class: "designer-numeric-grid" },
-      numberField(anchored ? "Offset X %" : "X %", shape.x * 100, 0.1, (v) => update({ x: v / 100 })),
-      numberField(anchored ? "Offset Y %" : "Y %", shape.y * 100, 0.1, (v) => update({ y: v / 100 })),
-      numberField(anchored ? "Scale W %" : "W %", shape.width * 100, 0.1, (v) => update({ width: v / 100 })),
-      numberField(anchored ? "Scale H %" : "H %", shape.height * 100, 0.1, (v) => update({ height: v / 100 }))
+      trackedNumberField("x", anchored ? "Offset X %" : "X %", shape.x * 100, 0.1, (v) => update({ x: v / 100 })),
+      trackedNumberField("y", anchored ? "Offset Y %" : "Y %", shape.y * 100, 0.1, (v) => update({ y: v / 100 })),
+      trackedNumberField("width", anchored ? "Scale W %" : "W %", shape.width * 100, 0.1, (v) => update({ width: v / 100 })),
+      trackedNumberField("height", anchored ? "Scale H %" : "H %", shape.height * 100, 0.1, (v) => update({ height: v / 100 }))
     ),
-    numberField(anchored ? "Extra rotation °" : "Rotation °", shape.rotation || 0, 1, (v) => update({ rotation: v }))
+    trackedNumberField("rotation", anchored ? "Extra rotation °" : "Rotation °", shape.rotation || 0, 1, (v) =>
+      update({ rotation: v })
+    )
   );
 
   if (shape.type === "capture") {
@@ -554,6 +816,7 @@ function renderLayoutProperties() {
       const collision = page.shapes.find((s) => s.type === "capture" && s.index === newIndex && s !== shape);
       if (collision) collision.index = shape.index;
       shape.index = newIndex;
+      renderLayoutProperties(); // slot numbers appear in the header and list
       redrawLayout();
     };
     panel.append(field("Capture index", select));
@@ -627,14 +890,26 @@ function renderLayoutProperties() {
     }
   }
 
-  const forwardBtn = el("button", { class: "btn small ghost", title: "Bring forward" }, "↑ Forward");
+  // Draw order is derived from anchoring, so these move the shape within its
+  // own group only (see shapeZOrderPeers) — an anchored shape can't be lifted
+  // out of its slot's layer, and moving a slot carries its group along.
+  const zHint = shape.anchor
+    ? `within slot ${shape.anchor}'s layer`
+    : page.shapes.some((s) => shapeParentIndex(page, s) === index)
+      ? "(carries anchored shapes along)"
+      : "";
+  const forwardBtn = el("button", { class: "btn small ghost", title: `Bring forward ${zHint}`.trim() }, "↑ Forward");
+  forwardBtn.disabled = !canMoveShapeZOrder(page, index, 1);
   forwardBtn.onclick = () => {
     layoutState.selectedShapeIndex = moveShapeZOrder(page, index, 1);
+    renderLayoutProperties(); // the shape list is in draw order, so it must follow
     redrawLayout();
   };
-  const backwardBtn = el("button", { class: "btn small ghost", title: "Send backward" }, "↓ Backward");
+  const backwardBtn = el("button", { class: "btn small ghost", title: `Send backward ${zHint}`.trim() }, "↓ Backward");
+  backwardBtn.disabled = !canMoveShapeZOrder(page, index, -1);
   backwardBtn.onclick = () => {
     layoutState.selectedShapeIndex = moveShapeZOrder(page, index, -1);
+    renderLayoutProperties();
     redrawLayout();
   };
   const deleteBtn = el("button", { class: "btn small ghost", title: "Delete" }, "✕ Delete");
@@ -700,6 +975,16 @@ function buildPageChips() {
 
 /* ---------------------------------------------------------------- toolbar */
 
+/** Append a freshly built shape to the active page and select it, so the
+ * inspector immediately shows its properties (and the shape list refreshes). */
+function addLayoutShape(page, shape) {
+  page.shapes.push(shape);
+  renderLayoutToolbar();
+  if (layoutState.editor) layoutState.editor.select(shape);
+  else renderLayoutProperties();
+  redrawLayout();
+}
+
 function renderLayoutToolbar() {
   const bar = $("layout-add-toolbar");
   if (!bar) return;
@@ -710,54 +995,54 @@ function renderLayoutToolbar() {
   const freeIndex = page ? nextFreeCaptureIndex(page) : null;
   captureBtn.disabled = !page || freeIndex === null;
   captureBtn.onclick = () => {
-    page.shapes.push({ type: "capture", index: freeIndex, x: 0.3, y: 0.3, width: 0.3, height: 0.3, rotation: 0 });
-    renderLayoutToolbar();
-    redrawLayout();
+    addLayoutShape(page, { type: "capture", index: freeIndex, x: 0.3, y: 0.3, width: 0.3, height: 0.3, rotation: 0 });
   };
 
   const text1Btn = el("button", { class: "btn small" }, "+ Text 1");
   text1Btn.disabled = !page || hasTextSlot(page, 1);
   text1Btn.onclick = () => {
-    page.shapes.push({ type: "text", index: 1, x: 0.1, y: 0.85, width: 0.8, height: 0.08, rotation: 0 });
-    renderLayoutToolbar();
-    redrawLayout();
+    addLayoutShape(page, { type: "text", index: 1, x: 0.1, y: 0.85, width: 0.8, height: 0.08, rotation: 0 });
   };
 
   const text2Btn = el("button", { class: "btn small" }, "+ Text 2");
   text2Btn.disabled = !page || hasTextSlot(page, 2);
   text2Btn.onclick = () => {
-    page.shapes.push({ type: "text", index: 2, x: 0.1, y: 0.94, width: 0.8, height: 0.05, rotation: 0 });
-    renderLayoutToolbar();
-    redrawLayout();
+    addLayoutShape(page, { type: "text", index: 2, x: 0.1, y: 0.94, width: 0.8, height: 0.05, rotation: 0 });
   };
 
   const imageBtn = el("button", { class: "btn small" }, "+ Image");
   imageBtn.disabled = !page;
   imageBtn.onclick = () => {
     openAssetPicker((path) => {
-      page.shapes.push({ type: "image", asset: basename(path), index: 0, x: 0.1, y: 0.1, width: 0.3, height: 0.2, rotation: 0 });
-      renderLayoutToolbar();
-      redrawLayout();
+      addLayoutShape(page, {
+        type: "image",
+        asset: basename(path),
+        index: 0,
+        x: 0.1,
+        y: 0.1,
+        width: 0.3,
+        height: 0.2,
+        rotation: 0,
+      });
     });
   };
 
-  const frameBtn = el("button", { class: "btn small" }, "+ Frame");
+  // With a capture slot selected, a new frame is almost always meant to frame
+  // that slot — so anchor it and size it to match, rather than dropping a
+  // free-floating box the user then has to anchor and resize by hand.
+  const selected = selectedLayoutShape();
+  const frameTarget = selected && selected.type === "capture" ? selected : null;
+  const frameBtn = el("button", { class: "btn small" }, frameTarget ? `+ Frame on slot ${frameTarget.index}` : "+ Frame");
   frameBtn.disabled = !page;
   frameBtn.onclick = () => {
-    page.shapes.push({
+    addLayoutShape(page, {
       type: FRAME,
       index: 0,
       styleId: "",
-      anchor: 0,
-      x: 0.3,
-      y: 0.3,
-      width: 0.3,
-      height: 0.3,
-      rotation: 0,
+      anchor: frameTarget ? frameTarget.index : 0,
+      ...(frameTarget ? ANCHOR_FILL_RECT : { x: 0.3, y: 0.3, width: 0.3, height: 0.3, rotation: 0 }),
       lockAspect: true,
     });
-    renderLayoutToolbar();
-    redrawLayout();
   };
 
   bar.append(captureBtn, text1Btn, text2Btn, imageBtn, frameBtn);
@@ -841,7 +1126,7 @@ async function isTemplateNameSaved(name) {
 function closeExportMenu() {
   const menu = $("layout-export-menu");
   if (menu) menu.remove();
-  document.removeEventListener("mousedown", onExportMenuOutsideClick);
+  document.removeEventListener("pointerdown", onExportMenuOutsideClick);
 }
 
 function onExportMenuOutsideClick(event) {
@@ -880,7 +1165,7 @@ function openExportMenu(anchorBtn) {
   menu.style.left = `${rect.left}px`;
   menu.style.top = `${rect.bottom + 6}px`;
   document.body.append(menu);
-  setTimeout(() => document.addEventListener("mousedown", onExportMenuOutsideClick), 0);
+  setTimeout(() => document.addEventListener("pointerdown", onExportMenuOutsideClick), 0);
 }
 
 function buildExportButton() {
@@ -965,9 +1250,13 @@ function buildLayoutSaveRow() {
 
   return el(
     "div",
-    { class: "designer-save-row" },
+    { class: "layout-topbar-actions" },
     el("label", { class: "row" }, assignCheckbox, "Use for the booth"),
-    el("div", { class: "row" }, saveBtn, loadBtn, importLabel, newBtn, buildExportButton())
+    saveBtn,
+    loadBtn,
+    importLabel,
+    newBtn,
+    buildExportButton()
   );
 }
 
@@ -988,13 +1277,15 @@ function buildTopBar() {
   dpiSelect.value = String(layoutState.dpi);
   dpiSelect.onchange = () => (layoutState.dpi = parseInt(dpiSelect.value, 10));
 
+  // Document-level settings and actions only — anything that belongs to the
+  // current selection lives in the inspector, so it stays near the canvas.
   return el(
     "div",
-    { class: "designer-toolbar" },
+    { class: "layout-topbar" },
     field("Template name", nameInput),
     field("Paper preset", paperSelect),
     field("DPI", dpiSelect),
-    buildPageChips()
+    buildLayoutSaveRow()
   );
 }
 
@@ -1027,25 +1318,36 @@ function renderLayoutPage() {
     ? `Page: ${page.size[0]}x${page.size[1]}px, ${page.captures} capture${page.captures > 1 ? "s" : ""}, ${pageOrientationOf(page)}`
     : "No page yet — click a chip above to create one.";
 
-  const canvasWrap = el(
+  const canvasCol = el(
     "div",
-    { class: "designer-canvas-wrap" },
+    { class: "layout-canvas-col" },
+    el("div", { id: "layout-add-toolbar", class: "row" }),
     el("div", { class: "designer-canvas-stack" }, el("canvas", { id: "layout-canvas" }), buildLayoutZoomControls()),
-    el("div", { class: "designer-caption" }, caption),
-    el("div", { id: "layout-add-toolbar", class: "row" })
+    el("div", { class: "designer-caption" }, caption)
   );
 
-  const controls = el(
-    "div",
-    { class: "designer-controls" },
-    buildTopBar(),
-    el("h3", {}, "Properties"),
-    el("div", { id: "layout-properties" }),
-    buildLayoutSaveRow()
+  const inspector = el(
+    "aside",
+    { class: "layout-inspector" },
+    el("div", { id: "layout-inspector-header", class: "layout-inspector-header" }),
+    el(
+      "div",
+      { class: "layout-inspector-body" },
+      el("div", { class: "layout-inspector-section" }, el("h4", {}, "Shapes"), el("div", { id: "layout-shape-list" })),
+      el("div", { class: "layout-inspector-section" }, el("h4", {}, "Properties"), el("div", { id: "layout-properties" }))
+    )
   );
 
   const body = $("section-body");
-  body.replaceChildren(el("div", { class: "designer-layout" }, canvasWrap, controls));
+  body.replaceChildren(
+    el(
+      "div",
+      { class: "layout-designer-page" },
+      buildTopBar(),
+      buildPageChips(),
+      el("div", { class: "layout-split" }, canvasCol, inspector)
+    )
+  );
 
   const canvas = $("layout-canvas");
   resizeLayoutCanvas(canvas);
@@ -1053,12 +1355,14 @@ function renderLayoutPage() {
   if (layoutState.editor) layoutState.editor.destroy();
   layoutState.editor = CanvasEditor.create({
     canvas,
-    getItems: () => (activeLayoutPage() ? activeLayoutPage().shapes : []),
+    // Draw order, not list order: CanvasEditor hit-tests back-to-front, so
+    // clicking overlapping shapes must pick the one actually drawn on top.
+    getItems: () => layoutDrawOrder(activeLayoutPage()),
     itemRect: shapeItemRect,
     setItemRect: setShapeItemRect,
     draw: drawLayoutScene,
     onSelect: onLayoutSelect,
-    onChange: () => renderLayoutProperties(),
+    onChange: syncLayoutPropertyInputs,
     onDelete: (item) => deleteLayoutShape(activeLayoutPage().shapes.indexOf(item)),
     aspectLocked: () => false,
   });
@@ -1066,6 +1370,11 @@ function renderLayoutPage() {
     if (layoutState.editor) layoutState.editor.destroy();
     closeExportMenu();
   });
+
+  // A fresh editor starts with nothing selected; carry over any selection the
+  // state still holds so the canvas outline and the inspector can't disagree.
+  const preselected = selectedLayoutShape();
+  if (preselected) layoutState.editor.select(preselected);
 
   renderLayoutToolbar();
   renderLayoutProperties();

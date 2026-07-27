@@ -753,6 +753,11 @@ function renderCustomPageGroup(nav, groupName, headerLabel) {
 }
 
 function renderNav() {
+  // Every navigation path calls renderNav() before rendering, so this is the
+  // one place that needs to know whether the incoming page wants full width.
+  const activePage = CUSTOM_PAGES.find((page) => page.id === state.active);
+  document.querySelector(".content").classList.toggle("wide", !!(activePage && activePage.wide));
+
   const nav = $("nav");
   nav.replaceChildren();
   renderCustomPageGroup(nav, "design", "Design");

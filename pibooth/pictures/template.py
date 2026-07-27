@@ -233,6 +233,53 @@ def resolve_shape_rect(shape: TemplateShape, page: TemplatePage) -> tuple[int, i
     )
 
 
+def _draw_order_key(index: int, page: TemplatePage) -> tuple[int, ...]:
+    """Sort key placing ``page.shapes[index]`` next to the capture slot it is
+    anchored to (see :func:`resolve_draw_order`).
+
+    The key is the chain of list positions from the anchor root down to the
+    shape, with the shape's own position repeated at the end. Lexicographic
+    ordering then keeps a slot adjacent to everything anchored to it, while
+    the repeated element gives a child something to compare against its
+    parent's own position — so a child listed before its parent still draws
+    behind it, instead of a plain prefix always sorting the parent first.
+    Nested anchors stay nested. A dangling anchor or an anchor cycle degrades
+    to the shape's own position, i.e. today's plain list order.
+    """
+    chain: list[int] = [index]
+    seen = {index}
+    current = page.shapes[index]
+    while current.anchor:
+        parent = next(
+            (i for i, s in enumerate(page.shapes) if s.kind == CAPTURE and s.index == current.anchor),
+            None,
+        )
+        if parent is None or parent in seen:
+            break  # dangling anchor, or a cycle — stop rather than loop forever
+        chain.insert(0, parent)
+        seen.add(parent)
+        current = page.shapes[parent]
+    return tuple(chain) + (index,)
+
+
+def resolve_draw_order(page: TemplatePage) -> list[TemplateShape]:
+    """Return ``page.shapes`` in the order they must be drawn.
+
+    A shape anchored to a capture slot belongs to that slot's layer: it has to
+    be obscured by whatever covers the slot. Drawing the raw list order would
+    let a frame anchored to slot 1 but added last paint over slots 2 and 3,
+    which is not what "anchored to slot 1" means to the person who drew it.
+
+    Anchored shapes are therefore grouped with their anchor, keeping their
+    existing position relative to it — a frame added after its slot still
+    draws on top of it, and a mat deliberately placed before its slot still
+    draws behind it. Only their position relative to *other* slots changes.
+    The stored list order is untouched; this is purely a render-time view of
+    it, so moving a slot's layer carries everything anchored to it along.
+    """
+    return [shape for _, shape in sorted(enumerate(page.shapes), key=lambda pair: _draw_order_key(pair[0], page))]
+
+
 class Template:
     """A named collection of :class:`TemplatePage`, at most one per
     (captures count, orientation) pair.
@@ -771,7 +818,7 @@ class TemplatePictureFactory(PilPictureFactory):
         """Draw every shape of the template page, in z-order."""
         frame_styles = load_frame_styles(self.assets_dir) if any(s.kind == FRAME for s in self._page.shapes) else []
 
-        for shape in self._page.shapes:
+        for shape in resolve_draw_order(self._page):
             rect_x, rect_y, rect_w, rect_h, rotation = resolve_shape_rect(shape, self._page)
             if rect_w <= 0 or rect_h <= 0:
                 continue
@@ -891,7 +938,7 @@ class TemplatePictureFactory(PilPictureFactory):
     def _build_outlines(self, image: Image.Image) -> None:
         """Draw outlines for every shape, useful to investigate position issues."""
         font = ImageFont.load_default()
-        for shape in self._page.shapes:
+        for shape in resolve_draw_order(self._page):
             rect_x, rect_y, rect_w, rect_h, rotation = resolve_shape_rect(shape, self._page)
             if rect_w <= 0 or rect_h <= 0:
                 continue
@@ -955,7 +1002,7 @@ def render_layout_guide(page: TemplatePage) -> Image.Image:
     canvas = Image.new("RGBA", page.size, (0, 0, 0, 0))
     min_dim = min(page.size)
 
-    for shape in page.shapes:
+    for shape in resolve_draw_order(page):
         if shape.kind not in (CAPTURE, TEXT, IMAGE):
             continue  # frame shapes are decorative, not position guides
         rect_x, rect_y, rect_w, rect_h, rotation = resolve_shape_rect(shape, page)
@@ -1000,7 +1047,7 @@ def render_layout_guide_svg(page: TemplatePage) -> str:
         '<g id="pibooth-layout-guides">',
     ]
 
-    for shape in page.shapes:
+    for shape in resolve_draw_order(page):
         if shape.kind not in (CAPTURE, TEXT, IMAGE):
             continue  # frame shapes are decorative, not position guides
         rect_x, rect_y, rect_w, rect_h, rotation = resolve_shape_rect(shape, page)

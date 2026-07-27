@@ -15,11 +15,18 @@
  *  - "local" space: fraction * canvas.width / canvas.height, i.e. the
  *    logical drawing surface the caller's draw() callback paints into. This
  *    is the same regardless of zoom — it's what canvas.width/height mean.
- *  - "view" space: actual canvas pixel space as touched by the mouse
+ *  - "view" space: actual canvas pixel space as touched by the pointer
  *    (canvas.getBoundingClientRect() maps CSS pixels to it). The
  *    viewport {scale, offsetX, offsetY} transform maps local -> view:
  *      view = local * scale + offset
  *    At scale=1/offset=0 local and view coincide.
+ *
+ * Note that view px and CSS px are only the same when the canvas is displayed
+ * at its backing-store size. Interaction affordances are specified in CSS px
+ * and converted with viewScale() — see its docstring.
+ *
+ * Input is handled through pointer events, so mouse, pen and touch all work;
+ * canvases driven by this library need `touch-action: none` in CSS.
  */
 "use strict";
 
@@ -29,13 +36,14 @@
 const SLOT_COLORS = ["#8fb8ae", "#c9a66b", "#a98fb8", "#6ba3c9"];
 
 const CanvasEditor = (function () {
-  const HANDLE_SIZE = 9; // constant screen/view px, regardless of zoom
-  const HANDLE_HIT_PAD = 3; // extra px tolerance around a handle for hit-testing
+  const HANDLE_SIZE = 9; // constant CSS px, regardless of zoom or canvas scale
+  const HANDLE_HIT_PAD = 3; // extra CSS px tolerance around a handle for hit-testing
+  const HANDLE_HIT_PAD_TOUCH = 11; // fingers are blunter than mouse pointers
   const MOVE_MARGIN = 0.1; // fraction of item that must stay on canvas when moving
   const MIN_SIZE_FRACTION = 0.01; // minimum item size, as a fraction of canvas
   const NUDGE_STEP = 0.002;
   const NUDGE_STEP_SHIFT = 0.02;
-  const SNAP_PX = 6; // view-space px snap threshold
+  const SNAP_PX = 6; // snap threshold, in CSS px
   const MIN_ZOOM = 0.5;
   const MAX_ZOOM = 4;
   const ACCENT = "#239587";
@@ -109,7 +117,21 @@ const CanvasEditor = (function () {
       return { width: canvas.width, height: canvas.height };
     }
 
-    /** Map a client (mouse event) coordinate to view space (canvas own pixel grid). */
+    /** View (backing-store) pixels per CSS pixel.
+     *
+     * The canvas is drawn in its own pixel grid but displayed at whatever size
+     * CSS gives it, and the two are rarely equal — the layout designer in
+     * particular renders a fixed-resolution backing store scaled to fit its
+     * column. Interaction affordances (handle squares, snap thresholds,
+     * outline widths) must feel the same on screen regardless, so every such
+     * constant is expressed in CSS px and multiplied by this factor.
+     */
+    function viewScale() {
+      const rect = canvas.getBoundingClientRect();
+      return rect.width ? canvas.width / rect.width : 1;
+    }
+
+    /** Map a client (pointer event) coordinate to view space (canvas own pixel grid). */
     function clientToView(clientX, clientY) {
       const rect = canvas.getBoundingClientRect();
       return {
@@ -183,11 +205,12 @@ const CanvasEditor = (function () {
       return null;
     }
 
-    function hitTestHandle(viewX, viewY) {
+    function hitTestHandle(viewX, viewY, coarse) {
       if (!selectedItem) return null;
       const pr = pixelRectOf(selectedItem);
       if (!pr) return null;
-      const half = HANDLE_SIZE / 2 + HANDLE_HIT_PAD;
+      const pad = coarse ? HANDLE_HIT_PAD_TOUCH : HANDLE_HIT_PAD;
+      const half = (HANDLE_SIZE / 2 + pad) * viewScale();
       for (const handle of localHandles(pr)) {
         const v = localToView(handle.lx, handle.ly);
         if (Math.abs(v.x - viewX) <= half && Math.abs(v.y - viewY) <= half) return handle.code;
@@ -274,10 +297,11 @@ const CanvasEditor = (function () {
     }
 
     function drawChrome(ctx) {
+      const vs = viewScale();
       if (activeGuideX !== null || activeGuideY !== null) {
         ctx.save();
         ctx.strokeStyle = ACCENT;
-        ctx.lineWidth = 1;
+        ctx.lineWidth = 1 * vs;
         if (activeGuideX !== null) {
           const top = localToView(activeGuideX, 0);
           const bottom = localToView(activeGuideX, canvas.height);
@@ -309,8 +333,8 @@ const CanvasEditor = (function () {
 
       ctx.save();
       ctx.strokeStyle = ACCENT;
-      ctx.lineWidth = 1.5;
-      ctx.setLineDash([6, 4]);
+      ctx.lineWidth = 1.5 * vs;
+      ctx.setLineDash([6 * vs, 4 * vs]);
       ctx.beginPath();
       corners.forEach((c, i) => (i === 0 ? ctx.moveTo(c.x, c.y) : ctx.lineTo(c.x, c.y)));
       ctx.closePath();
@@ -318,10 +342,11 @@ const CanvasEditor = (function () {
       ctx.setLineDash([]);
 
       ctx.fillStyle = "#fff";
+      const handleSize = HANDLE_SIZE * vs;
       for (const handle of localHandles(pr)) {
         const v = localToView(handle.lx, handle.ly);
-        ctx.fillRect(v.x - HANDLE_SIZE / 2, v.y - HANDLE_SIZE / 2, HANDLE_SIZE, HANDLE_SIZE);
-        ctx.strokeRect(v.x - HANDLE_SIZE / 2, v.y - HANDLE_SIZE / 2, HANDLE_SIZE, HANDLE_SIZE);
+        ctx.fillRect(v.x - handleSize / 2, v.y - handleSize / 2, handleSize, handleSize);
+        ctx.strokeRect(v.x - handleSize / 2, v.y - handleSize / 2, handleSize, handleSize);
       }
       ctx.restore();
     }
@@ -352,7 +377,7 @@ const CanvasEditor = (function () {
       activeGuideX = null;
       activeGuideY = null;
       if (!altKey) {
-        const threshold = SNAP_PX / viewport.scale;
+        const threshold = (SNAP_PX * viewScale()) / viewport.scale;
         const xCandidates = snapCandidates("x", size.width, drag.item);
         const yCandidates = snapCandidates("y", size.height, drag.item);
         const offsetsX = [-drag.startRect.w / 2, 0, drag.startRect.w / 2];
@@ -405,7 +430,7 @@ const CanvasEditor = (function () {
       // axis-aligned items (rotation ~ 0); skip it for rotated items rather
       // than snap to a visually-misleading position.
       if (!altKey && Math.abs(startRect.rotation) < 0.01) {
-        const threshold = SNAP_PX / viewport.scale;
+        const threshold = (SNAP_PX * viewScale()) / viewport.scale;
         if (sign.sx !== 0) {
           const freeX = anchor.x + sign.sx * newWidth;
           const snap = bestSnap(freeX, [0], snapCandidates("x", size.width, drag.item), threshold);
@@ -448,7 +473,7 @@ const CanvasEditor = (function () {
 
     /* ----------------------------------------------------------- pointer events */
 
-    function onMouseDown(event) {
+    function onPointerDown(event) {
       const viewPoint = clientToView(event.clientX, event.clientY);
       if (event.button === 1 || (event.button === 0 && spaceHeld)) {
         event.preventDefault();
@@ -457,8 +482,10 @@ const CanvasEditor = (function () {
         return;
       }
       if (event.button !== 0) return;
+      // Touch/pen drags would otherwise scroll or long-press-select the page.
+      if (event.pointerType !== "mouse") event.preventDefault();
 
-      const handleCode = hitTestHandle(viewPoint.x, viewPoint.y);
+      const handleCode = hitTestHandle(viewPoint.x, viewPoint.y, event.pointerType !== "mouse");
       if (handleCode) {
         beginResize(selectedItem, handleCode, viewPoint);
         attachDragListeners();
@@ -478,7 +505,7 @@ const CanvasEditor = (function () {
       requestDraw();
     }
 
-    function onMouseMove(event) {
+    function onPointerMove(event) {
       if (!drag) return;
       const viewPoint = clientToView(event.clientX, event.clientY);
       if (drag.mode === "move") updateMove(viewPoint, event.altKey);
@@ -496,13 +523,15 @@ const CanvasEditor = (function () {
     }
 
     function attachDragListeners() {
-      window.addEventListener("mousemove", onMouseMove);
-      window.addEventListener("mouseup", endDrag);
+      window.addEventListener("pointermove", onPointerMove);
+      window.addEventListener("pointerup", endDrag);
+      window.addEventListener("pointercancel", endDrag);
     }
 
     function detachDragListeners() {
-      window.removeEventListener("mousemove", onMouseMove);
-      window.removeEventListener("mouseup", endDrag);
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", endDrag);
+      window.removeEventListener("pointercancel", endDrag);
     }
 
     function onWheel(event) {
@@ -576,7 +605,7 @@ const CanvasEditor = (function () {
 
     /* -------------------------------------------------------------------- init */
 
-    canvas.addEventListener("mousedown", onMouseDown);
+    canvas.addEventListener("pointerdown", onPointerDown);
     canvas.addEventListener("wheel", onWheel, { passive: false });
     document.addEventListener("keydown", onKeyDown);
     document.addEventListener("keyup", onKeyUp);
@@ -626,7 +655,7 @@ const CanvasEditor = (function () {
           rafId = null;
         }
         detachDragListeners();
-        canvas.removeEventListener("mousedown", onMouseDown);
+        canvas.removeEventListener("pointerdown", onPointerDown);
         canvas.removeEventListener("wheel", onWheel);
         document.removeEventListener("keydown", onKeyDown);
         document.removeEventListener("keyup", onKeyUp);

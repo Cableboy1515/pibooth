@@ -16,6 +16,7 @@ from pibooth.pictures.template import (
     parse_mxgraph,
     render_layout_guide,
     render_layout_guide_svg,
+    resolve_draw_order,
     resolve_shape_rect,
     save_frame_styles,
     template_from_dict,
@@ -377,6 +378,130 @@ def test_template_picture_factory_missing_image_asset_skipped(tmp_path):
     factory = TemplatePictureFactory(template, PORTRAIT, *captures, assets_dir=str(tmp_path))
     image = factory.build()  # Must not raise despite the missing asset
     assert image.size == (400, 600)
+
+
+# ------------------------------------------------------------- draw order
+
+
+def _two_slot_page(extra_shapes):
+    """A 2-capture page (slots 1 and 2 side by side) plus `extra_shapes`,
+    returning the built TemplatePage. Shapes are appended in list order, so an
+    anchored shape here starts out *after* both slots."""
+    data = sample_template_dict()
+    data["pages"][1]["shapes"] = [
+        {"type": "capture", "index": 1, "x": 0.0, "y": 0.0, "width": 0.5, "height": 1.0, "rotation": 0},
+        {"type": "capture", "index": 2, "x": 0.5, "y": 0.0, "width": 0.5, "height": 1.0, "rotation": 0},
+    ] + list(extra_shapes)
+    return template_from_dict(data).get_page(2, PORTRAIT)
+
+
+def _order_labels(page):
+    return [f"{s.kind}{s.index}" if s.kind == "capture" else s.kind for s in resolve_draw_order(page)]
+
+
+def test_resolve_draw_order_unanchored_keeps_list_order():
+    page = _two_slot_page([{"type": "text", "index": 1, "x": 0.1, "y": 0.9, "width": 0.8, "height": 0.05, "rotation": 0}])
+    assert _order_labels(page) == ["capture1", "capture2", "text"]
+
+
+def test_resolve_draw_order_anchored_shape_follows_its_slot():
+    # The frame is listed LAST but anchored to slot 1, so it must be drawn
+    # right after slot 1 — and therefore be obscured by slot 2.
+    page = _two_slot_page(
+        [{"type": "frame", "x": 0, "y": 0, "width": 1.0, "height": 1.0, "rotation": 0, "anchor": 1, "styleId": "s"}]
+    )
+    assert _order_labels(page) == ["capture1", "frame", "capture2"]
+
+
+def test_resolve_draw_order_keeps_shape_below_its_slot():
+    # Listed BEFORE its anchor slot -> it stays behind it (e.g. a mat), while
+    # still moving as a group relative to the other slots.
+    data = sample_template_dict()
+    data["pages"][1]["shapes"] = [
+        {"type": "frame", "x": 0, "y": 0, "width": 1.2, "height": 1.2, "rotation": 0, "anchor": 1, "styleId": "s"},
+        {"type": "capture", "index": 1, "x": 0.0, "y": 0.0, "width": 0.5, "height": 1.0, "rotation": 0},
+        {"type": "capture", "index": 2, "x": 0.5, "y": 0.0, "width": 0.5, "height": 1.0, "rotation": 0},
+    ]
+    page = template_from_dict(data).get_page(2, PORTRAIT)
+    assert _order_labels(page) == ["frame", "capture1", "capture2"]
+
+
+def test_resolve_draw_order_moving_a_slot_carries_its_anchored_shapes():
+    page = _two_slot_page(
+        [{"type": "frame", "x": 0, "y": 0, "width": 1.0, "height": 1.0, "rotation": 0, "anchor": 1, "styleId": "s"}]
+    )
+    assert _order_labels(page) == ["capture1", "frame", "capture2"]
+    # Send slot 1 above slot 2 by swapping their list positions; the frame
+    # anchored to it must come along rather than stay behind slot 2.
+    page.shapes[0], page.shapes[1] = page.shapes[1], page.shapes[0]
+    assert _order_labels(page) == ["capture2", "capture1", "frame"]
+
+
+def test_resolve_draw_order_multiple_shapes_on_one_slot_keep_relative_order():
+    page = _two_slot_page(
+        [
+            {"type": "frame", "x": 0, "y": 0, "width": 1.0, "height": 1.0, "rotation": 0, "anchor": 1, "styleId": "a"},
+            {"type": "image", "asset": "logo.png", "x": 0, "y": 0, "width": 0.2, "height": 0.2, "rotation": 0, "anchor": 1},
+        ]
+    )
+    assert _order_labels(page) == ["capture1", "frame", "image", "capture2"]
+
+
+def test_resolve_draw_order_dangling_anchor_falls_back_to_list_order():
+    # anchor=9 doesn't exist (e.g. the capture count changed) -> plain order.
+    page = _two_slot_page(
+        [{"type": "frame", "x": 0, "y": 0, "width": 1.0, "height": 1.0, "rotation": 0, "anchor": 9, "styleId": "s"}]
+    )
+    assert _order_labels(page) == ["capture1", "capture2", "frame"]
+
+
+def test_resolve_draw_order_anchor_cycle_terminates():
+    # Two capture slots anchored to each other: must not hang, and must still
+    # return every shape exactly once.
+    data = sample_template_dict()
+    data["pages"][1]["shapes"] = [
+        {"type": "capture", "index": 1, "x": 0.0, "y": 0.0, "width": 0.5, "height": 1.0, "rotation": 0, "anchor": 2},
+        {"type": "capture", "index": 2, "x": 0.5, "y": 0.0, "width": 0.5, "height": 1.0, "rotation": 0, "anchor": 1},
+    ]
+    page = template_from_dict(data).get_page(2, PORTRAIT)
+    assert sorted(_order_labels(page)) == ["capture1", "capture2"]
+
+
+def test_template_picture_factory_anchored_frame_is_obscured_by_later_slot(tmp_path):
+    """End-to-end: the printed picture must show slot 2's photo covering a
+    frame that is anchored to slot 1 but listed last."""
+    data = sample_template_dict()
+    # Slot 1 fills the left half; slot 2 the right half but OVERLAPPING the
+    # middle, so it covers the right part of slot 1's frame.
+    data["pages"][1]["shapes"] = [
+        {"type": "capture", "index": 1, "x": 0.0, "y": 0.0, "width": 0.6, "height": 1.0, "rotation": 0},
+        {"type": "capture", "index": 2, "x": 0.4, "y": 0.0, "width": 0.6, "height": 1.0, "rotation": 0},
+        # Frame on slot 1, listed last -> used to paint over everything.
+        {"type": "frame", "x": 0, "y": 0, "width": 1.0, "height": 1.0, "rotation": 0, "anchor": 1, "styleId": "green"},
+    ]
+    template = template_from_dict(data)
+
+    assets_dir = tmp_path / "assets"
+    assets_dir.mkdir()
+    save_frame_styles(
+        str(assets_dir),
+        [FrameStyle(id="green", name="Green", kind="vector", color="#00ff00", border_width=0.08, radius=0.0)],
+    )
+
+    captures = [make_capture((100, 150), (255, 0, 0)), make_capture((100, 150), (0, 0, 255))]
+    factory = TemplatePictureFactory(template, PORTRAIT, *captures, assets_dir=str(assets_dir))
+    image = factory.build()
+
+    def greenish(pixel):
+        return pixel[1] > pixel[0] + 40 and pixel[1] > pixel[2] + 40
+
+    y = image.height // 2
+    # Slot 1 spans x 0..240 on a 400px-wide page; its frame's right edge sits
+    # at ~x=240, inside slot 2's box (x 160..400). Slot 2 is drawn after slot
+    # 1's group, so that edge must be covered.
+    assert not any(greenish(image.getpixel((x, y))) for x in range(200, 260)), "slot 2 must cover slot 1's frame"
+    # The frame's left edge is outside slot 2, so it must still be visible.
+    assert any(greenish(image.getpixel((x, y))) for x in range(0, 40)), "frame's left edge should still show"
 
 
 def test_template_picture_factory_vector_frame_at_anchored_position(tmp_path):

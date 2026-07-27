@@ -100,6 +100,10 @@ nav { flex: 1; overflow-y: auto; padding: 10px 8px; }
 
 /* ---------------------------------------------------------------- content */
 .content { flex: 1; padding: 28px 36px 110px; max-width: 980px; }
+/* Opt-out for pages that need the full window width (see the `wide` flag on
+   CUSTOM_PAGES entries) — the layout designer's canvas + inspector split
+   doesn't fit in the reading-width column used by the settings sections. */
+.content.wide { max-width: none; }
 
 .content-header h1 { margin: 0 0 4px; font-size: 24px; }
 .content-header p { margin: 0 0 22px; color: var(--muted); }
@@ -408,6 +412,7 @@ input[type="color"] {
 #designer-canvas {
   height: 520px;
   max-width: 100%;
+  touch-action: none; /* let the editor handle touch drags itself */
   border: 1px solid var(--border);
   border-radius: 8px;
   cursor: default;
@@ -569,6 +574,125 @@ input[type="color"] {
   border-top: 1px solid var(--border);
   padding-top: 6px;
   margin-top: 2px;
+}
+
+/* Layout designer split: a sticky canvas beside a sticky inspector that
+   scrolls on its own, so the preview never leaves the screen while you edit
+   the selected shape. Deliberately does NOT reuse .designer-layout /
+   .designer-controls — those still serve the overlay designer's wrapping
+   two-column layout. */
+.layout-designer-page { display: flex; flex-direction: column; gap: 16px; }
+
+.layout-topbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px 18px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--border);
+}
+.layout-topbar .designer-field { flex: 0 1 190px; }
+.layout-topbar-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+
+.layout-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 380px;
+  gap: 24px;
+  align-items: start;
+}
+
+.layout-canvas-col {
+  position: sticky;
+  top: 20px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.layout-canvas-col .row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+
+/* The canvas is sized by its wrapper rather than directly: capping the
+   canvas's own height would fight `width: 100%` and squash the drawing, so
+   the wrapper is capped instead (via the page aspect ratio published as
+   --page-ratio by resizeLayoutCanvas) and the canvas simply fills it. */
+.layout-canvas-col .designer-canvas-stack {
+  display: block;
+  width: 100%;
+  max-width: min(100%, calc((100vh - 250px) * var(--page-ratio, 0.667)));
+  margin-inline: auto;
+}
+
+#layout-canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  touch-action: none; /* let the editor handle touch drags itself */
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.layout-inspector {
+  position: sticky;
+  top: 20px;
+  max-height: calc(100vh - 40px);
+  display: flex;
+  flex-direction: column;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.layout-inspector-header {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+  font-weight: 600;
+}
+.layout-inspector-header .layout-inspector-kind {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.layout-inspector-header.empty { color: var(--muted); font-weight: 500; }
+.layout-inspector-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.layout-inspector-body h4 {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.layout-inspector-body .row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.layout-inspector-section { display: flex; flex-direction: column; gap: 8px; }
+
+/* Below this width the two columns can't sit side by side, but stacking them
+   naively would put the properties back off-screen — so the canvas stays
+   pinned to the top of the viewport and the inspector scrolls beneath it. */
+@media (max-width: 1100px) {
+  .layout-split { grid-template-columns: minmax(0, 1fr); }
+  .layout-canvas-col {
+    top: 0;
+    z-index: 2;
+    background: var(--bg);
+    padding-bottom: 8px;
+  }
+  .layout-canvas-col .designer-canvas-stack {
+    max-width: min(100%, calc(42vh * var(--page-ratio, 0.667)));
+  }
+  .layout-inspector { position: static; max-height: none; }
+  .layout-inspector-body { overflow-y: visible; }
 }
 
 /* ---------------------------------------------------------------- toasts */
